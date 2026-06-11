@@ -720,7 +720,9 @@ function skyTexture() {
    ===================================================================== */
 const LANE_W = 2.6, SEG_LEN = 12, NSEG = 20;
 const SPAWN_AHEAD = 110, DESPAWN_BEHIND = 16;
-const laneToX = l => (l - 1) * LANE_W;
+/* la caméra regarde vers +z : l'axe +x du monde est à GAUCHE de l'écran.
+   lane 0 (touche gauche) doit donc être à x POSITIF. */
+const laneToX = l => (1 - l) * LANE_W;
 
 const canvas = document.getElementById('game');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -1288,6 +1290,7 @@ const state = {
   nextSpawn: 30, scriptStep: 0,
   lastVert: { action: null, z: -999 },   // dernier obstacle saut/glissade posé
   lastSpawnZ: -999, jumpBuffer: 0,
+  curve: 0, curveTarget: 0, hill: 0, hillTarget: 0, nextBendDist: 220,
   pow: { magnet:0, shield:0, boost:0, slowmo:0, mult:0, fever:0 },
   shake: 0, zone: 0,
   char: charById(save.selected),
@@ -1296,12 +1299,22 @@ const state = {
 function powerDuration(base) { return state.char.bonusKey === 'powerDur' ? base * 1.3 : base; }
 function multValue() { return state.char.bonusKey === 'megaMult' ? 3 : 2; }
 
+/* ----- courbure du monde : virages et collines visuels façon Temple Run.
+   La logique de jeu reste sur un axe droit (équitable), mais tout ce qui
+   est devant le joueur est décalé/orienté le long d'une parabole. ----- */
+const BEND_K = 0.0016, HILL_K = 0.0007;
+function bendX(dz)    { return dz > 0 ? state.curve * BEND_K * dz * dz : 0; }
+function bendY(dz)    { return dz > 0 ? state.hill * HILL_K * dz * dz : 0; }
+function bendYaw(dz)  { return dz > 0 ? Math.atan(2 * BEND_K * state.curve * dz) : 0; }
+function bendPitch(dz){ return dz > 0 ? Math.atan(2 * HILL_K * state.hill * dz) : 0; }
+
 /* ---------------- spawn ---------------- */
 function placeObstacle(type, lane, zPos) {
   const g = obtainObstacle(type);
   const def = OB_DEFS[type];
-  const o = { kind:'obs', type, def, lane: def.full ? 'all' : lane, z: zPos, g, hitDone:false };
-  g.position.set(def.full ? 0 : laneToX(lane), 0, zPos);
+  const o = { kind:'obs', type, def, lane: def.full ? 'all' : lane, z: zPos, g, hitDone:false,
+              x: def.full ? 0 : laneToX(lane) };
+  g.position.set(o.x, 0, zPos);
   if (type === 'fridge') {
     o.fallT = 0; o.landed = false; o.started = false;   // tombe quand le joueur approche
     g.warn.visible = true; g.warn.scale.set(.4, .4, .4); g.warn.material.opacity = .9;
@@ -1313,8 +1326,9 @@ function placeObstacle(type, lane, zPos) {
 }
 function placePickup(type, lane, zPos, h) {
   const g = obtainPickup(type);
-  const o = { kind:'pick', type, lane, z: zPos, h: h || 0, g, hitDone:false, bobPhase: rnd(0, 6.28) };
-  g.position.set(laneToX(lane), 1.1 + (h || 0), zPos);
+  const o = { kind:'pick', type, lane, z: zPos, h: h || 0, g, hitDone:false, bobPhase: rnd(0, 6.28),
+              x: laneToX(lane), yAnim: 1.1 + (h || 0) };
+  g.position.set(o.x, o.yAnim, zPos);
   state.objects.push(o);
   return o;
 }
@@ -1442,6 +1456,9 @@ function startRun() {
   state.nextSpawn = 30; state.scriptStep = save.tutoSeen ? 3 : 0;
   state.lastVert = { action: null, z: -999 };
   state.lastSpawnZ = -999; state.jumpBuffer = 0;
+  state.curve = 0; state.curveTarget = 0;
+  state.hill = 0; state.hillTarget = 0;
+  state.nextBendDist = 220;
   state.causeLabel = '';
   chaser.dist = 4.0; chaser.targetDist = 4.0; chaser.laneF = 1;
   chaser.mode = 'close'; chaser.timer = 3.5; chaser.drumAcc = 0;   // poursuite d'intro
@@ -1643,6 +1660,15 @@ function update(dt) {
                (S.char.bonusKey === 'score' ? 1.1 : 1);
   S.score += move * 1.7 * mult;
 
+  /* virages et collines : nouvelle direction tous les 220-420 m */
+  if (S.dist > S.nextBendDist) {
+    S.curveTarget = pick([-1, -.65, 0, 0, .65, 1]);
+    S.hillTarget = pick([-.8, -.4, 0, 0, .4, .8]);
+    S.nextBendDist = S.dist + rnd(220, 420);
+  }
+  S.curve += (S.curveTarget - S.curve) * Math.min(1, dt * .5);
+  S.hill += (S.hillTarget - S.hill) * Math.min(1, dt * .45);
+
   /* zones : ambiance toutes les 800 m */
   const zi = Math.floor(S.dist / 800) % ZONES.length;
   if (zi !== S.zone) { S.zone = zi; addFloater('🏛️ ' + ZONES[zi].name, '#ffd35c'); }
@@ -1742,14 +1768,15 @@ function update(dt) {
         }
       }
     } else {
-      /* pickups : flottement + aimant */
-      o.g.position.y = 1.1 + o.h + Math.sin(S.t * 4 + o.bobPhase) * .12;
+      /* pickups : flottement + aimant (coordonnées logiques, la courbure
+         du monde est appliquée au rendu) */
+      o.yAnim = 1.1 + o.h + Math.sin(S.t * 4 + o.bobPhase) * .12;
       if (o.type === 'brain') {
         o.g.scale.x = .25 + .75 * Math.abs(Math.cos(S.t * 3.5 + o.bobPhase));
         const range = magnetOn ? 16 : (miniMag ? 6.5 : 0);
         const dz = o.z - S.z;
         if (range > 0 && dz > 0 && dz < range) {
-          o.g.position.x += (px - o.g.position.x) * Math.min(1, dt * 9);
+          o.x += (px - o.x) * Math.min(1, dt * 9);
           o.z -= 18 * dt;
           o.g.position.z = o.z;
           o.h *= (1 - dt * 5);
@@ -1770,8 +1797,8 @@ function update(dt) {
     const dz = o.z - S.z;
     if (!o.hitDone && dz < 1.15 && dz > -1.15) {
       if (o.kind === 'pick') {
-        const laneOk = Math.abs(o.g.position.x - px) < 1.35;
-        const vOk = Math.abs((player.y + 1.1) - o.g.position.y) < 1.5 || magnetOn;
+        const laneOk = Math.abs(o.x - px) < 1.35;
+        const vOk = Math.abs((player.y + 1.1) - o.yAnim) < 1.5 || magnetOn;
         if (laneOk && vOk) {
           o.hitDone = true;
           applyPickup(o);
@@ -1806,6 +1833,26 @@ function renderWorld(dt) {
   const S = state;
   const px = laneToX(player.laneF);
 
+  /* courbure du monde : la piste et tout ce qui est devant suivent
+     la parabole des virages/collines */
+  for (const seg of segments) {
+    const dzc = seg.zStart + SEG_LEN / 2 - S.z;
+    seg.position.x = bendX(dzc);
+    seg.position.y = bendY(dzc);
+    seg.rotation.y = bendYaw(dzc);
+    seg.rotation.x = -bendPitch(dzc);
+  }
+  for (const o of S.objects) {
+    const dz = o.z - S.z;
+    o.g.position.x = o.x + bendX(dz);
+    if (o.kind === 'obs') {
+      o.g.position.y = bendY(dz);
+      o.g.rotation.y = bendYaw(dz);
+    } else {
+      o.g.position.y = o.yAnim + bendY(dz);
+    }
+  }
+
   /* position du joueur + animation de course */
   player.group.position.x = px;
   player.group.position.z = S.z;
@@ -1831,7 +1878,7 @@ function renderWorld(dt) {
   player.mesh.position.y = player.y + (player.size.h / 2) * slideSquash + runBob + .06;
   player.mesh.scale.y = slideSquash * (player.y > 0.05 ? 1.06 : 1);
   player.mesh.scale.x = flip * playerAnim.baseSX * (1 + (1 - slideSquash) * .45);
-  if (!S.dead) player.mesh.rotation.z = (player.laneF - player.lane) * .35 +
+  if (!S.dead) player.mesh.rotation.z = (player.lane - player.laneF) * .35 +
     (grounded && running ? Math.sin(ph * Math.PI * 2) * .045 : 0);
   player.shadow.material.opacity = Math.max(.15, .75 - player.y * .25);
   const shScale = 1 + player.y * .12;
@@ -1874,7 +1921,7 @@ function renderWorld(dt) {
     lerp(camera.position.y, camY, Math.min(1, dt * 6)),
     S.z - 8.4
   );
-  camera.lookAt(px * .7, 1.7, S.z + 14);
+  camera.lookAt(px * .7 + bendX(18) * .9, 1.7 + bendY(22) * .6, S.z + 14);
   camera.fov = lerp(camera.fov, 62 + S.speed * .42 + (S.pow.boost > 0 ? 8 : 0), Math.min(1, dt * 4));
   camera.updateProjectionMatrix();
 
