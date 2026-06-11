@@ -345,6 +345,9 @@ const AudioSys = {
       case 'chest':  [659,784,988,1319].forEach((f,i)=>setTimeout(()=>this.tone(f,.12,'square',.12),i*80)); break;
       case 'click':  this.tone(900, .05, 'triangle', .1); break;
       case 'fever':  [523,659,784,1046,1319].forEach((f,i)=>setTimeout(()=>this.tone(f,.1,'square',.13),i*60)); break;
+      case 'tom':    this.tone(95, .18, 'sine', .3, 55); this.noise(.05, .12); break;
+      case 'tungtung': [0, 170, 340].forEach(d => setTimeout(() => {
+                       this.tone(110, .16, 'sine', .34, 60); this.noise(.05, .15); }, d)); break;
     }
   },
   BASS: [65.4,65.4,98,65.4, 82.4,82.4,98,123.5, 65.4,65.4,98,65.4, 87.3,87.3,110,123.5],
@@ -578,6 +581,21 @@ function getCharCanvas(id, cb) {
     img.onerror = finishVector;
     img.src = SPRITES[id];
   } else finishVector();
+}
+
+/* chargeur générique de sprite embarqué (par clé SPRITE_DATA) */
+const spriteCanvasCache = {};
+function loadSprite(key, cb) {
+  if (spriteCanvasCache[key]) { cb(spriteCanvasCache[key]); return; }
+  if (!SPRITES[key]) { cb(null); return; }
+  const img = new Image();
+  img.onload = () => {
+    const c = makeCanvas(img.width, img.height);
+    c.getContext('2d').drawImage(img, 0, 0);
+    spriteCanvasCache[key] = c; cb(c);
+  };
+  img.onerror = () => cb(null);
+  img.src = SPRITES[key];
 }
 
 /* texture emoji (pour pickups, flammes, etc.) */
@@ -920,14 +938,82 @@ const player = {
   player.group.add(player.aura);
   scene.add(player.group);
 }
+/* --- animation de course ---
+   priorité : frames run_<id>_0..3 (vrai cycle) > back_<id> (vue de dos,
+   animée par alternance miroir) > sprite de face (même astuce miroir). */
+const playerAnim = { frames: [], mirror: true, phase: 0, baseSX: 1 };
 function setPlayerSkin(id) {
-  getCharCanvas(id, (c) => {
-    const t = new THREE.CanvasTexture(c);
-    player.mesh.material.map = t;
+  const apply = (frames, mirror) => {
+    playerAnim.frames = frames;
+    playerAnim.mirror = mirror;
+    playerAnim.phase = 0;
+    const img = frames[0].image;
+    playerAnim.baseSX = clamp((img.width / img.height) * (player.size.h / player.size.w), .7, 1.45);
+    player.mesh.material.map = frames[0];
     player.mesh.material.needsUpdate = true;
-  });
+  };
+  const runKeys = [0, 1, 2, 3].map(i => `run_${id}_${i}`);
+  if (runKeys.every(k => SPRITES[k])) {
+    const frames = [null, null, null, null];
+    let n = 0;
+    runKeys.forEach((k, i) => loadSprite(k, (c) => {
+      frames[i] = new THREE.CanvasTexture(c);
+      if (++n === 4) apply(frames, false);
+    }));
+    return;
+  }
+  if (SPRITES['back_' + id]) {
+    loadSprite('back_' + id, (c) => apply([new THREE.CanvasTexture(c)], true));
+    return;
+  }
+  getCharCanvas(id, (c) => apply([new THREE.CanvasTexture(c)], true));
 }
 setPlayerSkin(save.selected);
+
+/* ---------------- poursuivant : Tung Tung Tung Sahur ---------------- */
+const chaser = {
+  group: new THREE.Group(), mesh: null, shadow: null,
+  dist: 14, targetDist: 14, laneF: 1, phase: 0,
+  mode: 'away',            // away | close | catching
+  timer: 0, drumAcc: 0, baseSX: 1, size: { w: 2.4, h: 3.0 },
+};
+{
+  const mat = new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide, alphaTest: .05, opacity: 0 });
+  chaser.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 3.0), mat);
+  chaser.mesh.rotation.y = Math.PI;
+  chaser.group.add(chaser.mesh);
+  chaser.shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.3, 2.3),
+    new THREE.MeshBasicMaterial({ map: TEX.shadow, transparent: true, depthWrite: false, opacity: 0 })
+  );
+  chaser.shadow.rotation.x = -Math.PI / 2;
+  chaser.shadow.position.y = .03;
+  chaser.group.add(chaser.shadow);
+  chaser.group.visible = false;
+  scene.add(chaser.group);
+  const setTex = (c) => {
+    if (!c) return;
+    mat.map = new THREE.CanvasTexture(c);
+    mat.needsUpdate = true;
+    chaser.baseSX = clamp((c.width / c.height) * (chaser.size.h / chaser.size.w), .7, 1.5);
+  };
+  if (SPRITES.chaser) loadSprite('chaser', setTex);
+  else if (SPRITES.back_tungtung) loadSprite('back_tungtung', setTex);
+  else getCharCanvas('tungtung', setTex);
+}
+function chaserEscape() {
+  if (chaser.mode === 'away') return;
+  chaser.mode = 'away'; chaser.timer = 0; chaser.targetDist = 14;
+  addFloater('💨 Semé !', '#3fae6a');
+}
+function triggerChase(sec) {
+  if (chaser.mode === 'catching') return;
+  chaser.mode = 'close';
+  chaser.targetDist = 3.2;     // collé aux talons (loin de la caméra = lisible)
+  chaser.timer = Math.max(chaser.timer, sec);
+  addFloater('⚠️ TUNG TUNG TUNG SAHUR !', '#ff4d4d');
+  AudioSys.sfx('tungtung');
+}
 
 /* ---------------- particules ---------------- */
 const particles = [];
@@ -1200,6 +1286,8 @@ const state = {
   dead: false, deathTimer: 0, causeLabel: '',
   objects: [],          // {kind:'obs'|'pick', type, lane|'all', z, g, ...}
   nextSpawn: 30, scriptStep: 0,
+  lastVert: { action: null, z: -999 },   // dernier obstacle saut/glissade posé
+  lastSpawnZ: -999, jumpBuffer: 0,
   pow: { magnet:0, shield:0, boost:0, slowmo:0, mult:0, fever:0 },
   shake: 0, zone: 0,
   char: charById(save.selected),
@@ -1219,7 +1307,7 @@ function placeObstacle(type, lane, zPos) {
     g.warn.visible = true; g.warn.scale.set(.4, .4, .4); g.warn.material.opacity = .9;
     g.children[0].position.y = 16; g.children[1].position.y = 16.4; g.children[2].position.y = 16.8;
   }
-  if (type === 'drum') { o.extraSpeed = rnd(5, 9); o.rolling = false; }
+  if (type === 'drum') { o.extraSpeed = rnd(4, 6); o.rolling = false; }
   state.objects.push(o);
   return o;
 }
@@ -1247,52 +1335,96 @@ function coinZigzag(zStart) {
   }
 }
 
-function spawnPattern(zBase) {
-  const hard = clamp(state.dist / 3000, 0, 1);
+/* Garantie d'équité : après un obstacle exigeant une action verticale
+   (saut ou glissade), le suivant qui exige l'action OPPOSÉE est repoussé
+   assez loin pour laisser le temps de se rétablir. Jamais de tronc à
+   sauter dans la foulée d'une arche où l'on glisse. */
+function vertGate(zBase, action) {
+  if (!action) return zBase;
+  const lv = state.lastVert;
+  let z = zBase;
+  if (lv.action) {
+    const need = (action !== lv.action)
+      ? state.speed * 1.4 + 12      // transition saut <-> glissade
+      : state.speed * 0.8 + 6;      // même action répétée
+    z = Math.max(z, lv.z + need);
+  }
+  state.lastVert = { action, z };
+  return z;
+}
+
+function spawnPattern(zSuggested) {
+  const S = state;
+  const hard = clamp(S.dist / 3000, 0, 1);
+  /* jamais deux patterns qui se chevauchent, même après décalage vertGate */
+  let zBase = Math.max(zSuggested, S.lastSpawnZ + clamp(S.speed * .6, 9, 22));
+  let zEnd = zBase + 6;
+
   /* séquence d'intro scriptée : apprendre saut, glissade, voie */
-  if (state.scriptStep < 3) {
-    if (state.scriptStep === 0) { placeObstacle('log', 0, zBase); coinArc(1, zBase); }
-    else if (state.scriptStep === 1) { placeObstacle('arch', 0, zBase); coinLine(irnd(0, 2), zBase + 6, 4); }
-    else { placeObstacle('wall', 1, zBase); coinLine(0, zBase + 5, 4); }
-    state.scriptStep++;
+  if (S.scriptStep < 3) {
+    if (S.scriptStep === 0) { zBase = vertGate(zBase, 'jump'); placeObstacle('log', 0, zBase); coinArc(1, zBase); }
+    else if (S.scriptStep === 1) { zBase = vertGate(zBase, 'slide'); placeObstacle('arch', 0, zBase); coinLine(irnd(0, 2), zBase + 6, 4); zEnd = zBase + 14; }
+    else { placeObstacle('wall', 1, zBase); coinLine(0, zBase + 5, 4); zEnd = zBase + 14; }
+    S.scriptStep++;
+    S.lastSpawnZ = Math.max(S.lastSpawnZ, zEnd);
     return;
   }
+
   const r = Math.random();
   if (r < .17) {                                          // tronc pleine largeur → SAUT
+    zBase = vertGate(zBase, 'jump');
     placeObstacle('log', 0, zBase);
     if (Math.random() < .65) coinArc(irnd(0, 2), zBase);
+    zEnd = zBase + 5;
   } else if (r < .32) {                                   // arche pleine largeur → GLISSADE
+    zBase = vertGate(zBase, 'slide');
     placeObstacle('arch', 0, zBase);
-    if (Math.random() < .4) coinLine(irnd(0, 2), zBase + 5, 4);
+    if (Math.random() < .4) { coinLine(irnd(0, 2), zBase + 5, 4); zEnd = zBase + 14; }
   } else if (r < .60) {                                   // obstacles de voie
     const types = ['wall','croc','drum','fridge','puddle','portal'];
     const lanes = [0, 1, 2];
     const n = (hard > .25 && Math.random() < .3 + hard * .45) ? 2 : 1;
-    const used = [];
+    const used = [], chosen = [];
     for (let i = 0; i < n; i++) {
-      const lane = pick(lanes.filter(l => !used.includes(l)));
-      used.push(lane);
       let type = pick(types);
       if (i === 1 && (OB_DEFS[type].hit === 'full')) type = pick(['croc','drum','puddle','portal']);
-      if (type === 'fridge' && state.dist < 350) type = 'croc';
+      if (type === 'fridge' && S.dist < 350) type = 'croc';
+      chosen.push(type);
+    }
+    /* si la rangée peut imposer une action verticale, on respecte la
+       transition (le joueur a pu choisir la voie portail = glissade) */
+    const rowAction = chosen.includes('portal') ? 'slide'
+                    : chosen.some(t => OB_DEFS[t].hit === 'low') ? 'jump' : null;
+    zBase = vertGate(zBase, rowAction);
+    for (const type of chosen) {
+      const lane = pick(lanes.filter(l => !used.includes(l)));
+      used.push(lane);
       placeObstacle(type, lane, zBase);
       if (OB_DEFS[type].hit === 'low' && Math.random() < .4) coinArc(lane, zBase);
     }
     const free = lanes.filter(l => !used.includes(l));
-    if (free.length && Math.random() < .5) coinLine(pick(free), zBase - 2, 5);
+    if (free.length && Math.random() < .5) { coinLine(pick(free), zBase - 2, 5); zEnd = zBase + 10; }
   } else if (r < .74) {                                   // pluie de cerveaux
-    Math.random() < .35 ? coinZigzag(zBase) : coinLine(irnd(0, 2), zBase, irnd(5, 9));
+    if (Math.random() < .35) { coinZigzag(zBase); zEnd = zBase + 24; }
+    else { const n = irnd(5, 9); coinLine(irnd(0, 2), zBase, n); zEnd = zBase + n * 2.3; }
   } else if (r < .82) {                                   // power-up
     placePickup(pick(['magnet','shield','boost','slowmo','mult','fever','magnet','shield','slowmo','mult']), irnd(0, 2), zBase);
-  } else if (r < .87 && state.dist > 250) {               // coffre
+  } else if (r < .87 && S.dist > 250) {                   // coffre
     placePickup('chest', irnd(0, 2), zBase);
-  } else if (hard > .35) {                                // enchaînement saut→glissade
+  } else if (hard > .35) {                                // enchaînement saut→glissade espacé
+    zBase = vertGate(zBase, 'jump');
     placeObstacle('log', 0, zBase);
-    placeObstacle('arch', 0, zBase + clamp(state.speed * .9, 14, 24));
     coinArc(irnd(0, 2), zBase);
+    const z2 = vertGate(zBase + 1, 'slide');
+    placeObstacle('arch', 0, z2);
+    zEnd = z2 + 5;
   } else {
-    placeObstacle(pick(['log','arch']), 0, zBase);
+    const t = pick(['log','arch']);
+    zBase = vertGate(zBase, t === 'log' ? 'jump' : 'slide');
+    placeObstacle(t, 0, zBase);
+    zEnd = zBase + 5;
   }
+  S.lastSpawnZ = Math.max(S.lastSpawnZ, zEnd);
 }
 
 /* ---------------- cycle de vie d'un run ---------------- */
@@ -1308,7 +1440,11 @@ function startRun() {
   state.z = 0; state.speed = state.baseSpeed;
   state.stumbleSlow = 0; state.invinc = 0; state.shake = 0; state.zone = 0;
   state.nextSpawn = 30; state.scriptStep = save.tutoSeen ? 3 : 0;
+  state.lastVert = { action: null, z: -999 };
+  state.lastSpawnZ = -999; state.jumpBuffer = 0;
   state.causeLabel = '';
+  chaser.dist = 4.0; chaser.targetDist = 4.0; chaser.laneF = 1;
+  chaser.mode = 'close'; chaser.timer = 3.5; chaser.drumAcc = 0;   // poursuite d'intro
   state.pow = { magnet:0, shield:0, boost:0, slowmo:0, mult:0, fever:0 };
   state.char = charById(save.selected);
   player.lane = 1; player.laneF = 1;
@@ -1370,6 +1506,8 @@ function jump() {
     player.vy = 7.8; player.usedDouble = true;
     AudioSys.sfx('jump2');
     burst3D(player.group.position.x, player.y + .6, state.z, 0xf78fb8, 10, 5);
+  } else {
+    state.jumpBuffer = .18;       // saut demandé un peu trop tôt : on le garde
   }
 }
 function slide() {
@@ -1380,9 +1518,14 @@ function slide() {
 }
 function togglePause(force) {
   if (state.mode !== 'play' || state.dead) return;
+  const wasPaused = state.paused;
   state.paused = force !== undefined ? force : !state.paused;
   showScreen(state.paused ? 'pause' : null);
-  if (!state.paused) AudioSys.sfx('click');
+  if (!state.paused && wasPaused) {
+    state.invinc = Math.max(state.invinc, 1.0);   // petite grâce à la reprise
+    addFloater('GO !', '#3fae6a');
+    AudioSys.sfx('click');
+  }
 }
 
 /* ---------------- effets pickups / collisions ---------------- */
@@ -1401,10 +1544,10 @@ function applyPickup(o) {
     }
     case 'magnet': P.magnet = powerDuration(7);  addFloater('🧲 AIMANT !', '#19c8c8'); break;
     case 'shield': P.shield = Math.max(P.shield, powerDuration(12)); addFloater('🛡️ BOUCLIER !', '#19c8c8'); AudioSys.sfx('shield'); break;
-    case 'boost':  P.boost  = powerDuration(3.2); addFloater('🚀 BOOST !', '#ff2bd6'); break;
+    case 'boost':  P.boost  = powerDuration(3.2); addFloater('🚀 BOOST !', '#ff2bd6'); chaserEscape(); break;
     case 'slowmo': P.slowmo = powerDuration(state.char.bonusKey === 'noSlip' ? 6 : 5); addFloater('🐌 SLOW-MO !', '#3fae6a'); break;
     case 'mult':   P.mult   = powerDuration(10); addFloater(`✖️ SCORE x${multValue()} !`, '#ffd35c'); break;
-    case 'fever':  P.fever  = powerDuration(6);  addFloater('🌈 FEVER BRAINROT !!', '#ff2bd6'); AudioSys.sfx('fever'); break;
+    case 'fever':  P.fever  = powerDuration(6);  addFloater('🌈 FEVER BRAINROT !!', '#ff2bd6'); AudioSys.sfx('fever'); chaserEscape(); break;
     case 'chest': {
       const loot = irnd(25, 80);
       state.runBrains += loot;
@@ -1429,9 +1572,16 @@ function hitObstacle(o) {
     }
     state.stumbleSlow = 1.4;
     state.shake = .5;
-    addFloater('☕ SPLASH !', '#d9a05a');
     AudioSys.sfx('splash');
     burst3D(player.group.position.x, .4, state.z, 0x8a5a2c, 14, 6);
+    if (chaser.mode === 'close' && chaser.dist < 5.5) {
+      chaser.mode = 'catching';               // déjà aux trousses : il fond sur toi
+      addFloater('💀 IL T\'A EU !', '#ff4d4d');
+      AudioSys.sfx('tungtung');
+    } else {
+      addFloater('☕ SPLASH !', '#d9a05a');
+      triggerChase(6);                        // le dérapage l'attire
+    }
     return;
   }
   if (P.fever > 0 || P.boost > 0) {
@@ -1448,6 +1598,7 @@ function hitObstacle(o) {
     AudioSys.sfx('shield');
     burst3D(player.group.position.x, 1.4, state.z, 0x19f7ff, 20, 8);
     state.shake = .6;
+    triggerChase(5);                          // le choc l'a alerté
     return;
   }
   endRun(o.def.label);
@@ -1505,9 +1656,41 @@ function update(dt) {
   if (player.y > 0 || player.vy !== 0) {
     player.vy -= 23 * dt;
     player.y += player.vy * dt;
-    if (player.y <= 0) { player.y = 0; player.vy = 0; player.usedDouble = false; }
+    if (player.y <= 0) {
+      player.y = 0; player.vy = 0; player.usedDouble = false;
+      if (S.jumpBuffer > 0) {                  // saut mis en mémoire tampon
+        S.jumpBuffer = 0;
+        player.vy = 8.6; player.sliding = 0;
+        AudioSys.sfx('jump');
+      }
+    }
   }
+  S.jumpBuffer = Math.max(0, S.jumpBuffer - dt);
   player.sliding = Math.max(0, player.sliding - dt);
+
+  /* poursuivant Tung Tung Tung Sahur */
+  {
+    const C = chaser;
+    if (C.mode === 'catching') {
+      C.dist -= 9 * dt;
+      if (C.dist <= 1.2) {
+        C.dist = 1.2;
+        AudioSys.sfx('thud');
+        endRun('Tung Tung Tung Sahur en personne');
+      }
+    } else {
+      if (C.timer > 0) {
+        C.timer -= dt;
+        if (C.timer <= 0 && C.mode === 'close') { C.mode = 'away'; C.targetDist = 14; }
+      }
+      C.dist += (C.targetDist - C.dist) * Math.min(1, dt * 1.6);
+      if (C.mode === 'close' && C.dist < 7) {  // tambour de tension
+        C.drumAcc -= dt;
+        if (C.drumAcc <= 0) { AudioSys.sfx('tom'); C.drumAcc = .5; }
+      }
+    }
+    C.laneF += (player.laneF - C.laneF) * Math.min(1, dt * 4);
+  }
 
   /* spawn continu devant */
   S.nextSpawn -= move;
@@ -1528,7 +1711,7 @@ function update(dt) {
 
     if (o.kind === 'obs') {
       if (o.type === 'drum') {
-        if (!o.rolling && o.z - S.z < 52) o.rolling = true;   // ne roule que près du joueur
+        if (!o.rolling && o.z - S.z < 45) o.rolling = true;   // ne roule que près du joueur
         if (o.rolling) {
           o.z -= o.extraSpeed * dt;
           o.g.position.z = o.z;
@@ -1623,16 +1806,33 @@ function renderWorld(dt) {
   const S = state;
   const px = laneToX(player.laneF);
 
-  /* position du joueur */
+  /* position du joueur + animation de course */
   player.group.position.x = px;
   player.group.position.z = S.z;
+  const running = S.mode === 'play' && !S.paused && !S.dead;
+  const grounded = player.y <= 0 && player.sliding <= 0;
+  if ((running || S.mode !== 'play') && grounded) {
+    const stepHz = S.mode === 'play' ? clamp(S.speed / 2.7, 3.2, 9) : 4;
+    playerAnim.phase += stepHz * dt;
+  }
+  const ph = playerAnim.phase;
+  if (playerAnim.frames.length === 4) {
+    /* vrai cycle 4 frames ; en l'air on fige sur la poussée */
+    const idx = player.y > 0.05 ? 3 : Math.floor(ph) % 4;
+    if (player.mesh.material.map !== playerAnim.frames[idx]) {
+      player.mesh.material.map = playerAnim.frames[idx];
+      player.mesh.material.needsUpdate = true;
+    }
+  }
+  /* alternance miroir : illusion jambe gauche / jambe droite */
+  const flip = (playerAnim.mirror && Math.floor(ph) % 2 === 1) ? -1 : 1;
   const slideSquash = player.sliding > 0 ? .52 : 1;
-  const runBob = (player.y <= 0 && player.sliding <= 0 && S.mode === 'play' && !S.paused && !S.dead)
-    ? Math.abs(Math.sin(S.t * 9)) * .14 : 0;
+  const runBob = (grounded && running) ? Math.abs(Math.sin(ph * Math.PI)) * .13 : 0;
   player.mesh.position.y = player.y + (player.size.h / 2) * slideSquash + runBob + .06;
-  player.mesh.scale.y = slideSquash;
-  player.mesh.scale.x = 1 + (1 - slideSquash) * .45;
-  if (!S.dead) player.mesh.rotation.z = (player.laneF - player.lane) * .35;
+  player.mesh.scale.y = slideSquash * (player.y > 0.05 ? 1.06 : 1);
+  player.mesh.scale.x = flip * playerAnim.baseSX * (1 + (1 - slideSquash) * .45);
+  if (!S.dead) player.mesh.rotation.z = (player.laneF - player.lane) * .35 +
+    (grounded && running ? Math.sin(ph * Math.PI * 2) * .045 : 0);
   player.shadow.material.opacity = Math.max(.15, .75 - player.y * .25);
   const shScale = 1 + player.y * .12;
   player.shadow.scale.set(shScale, shScale, 1);
@@ -1644,6 +1844,27 @@ function renderWorld(dt) {
   else if (S.pow.boost > 0) player.aura.material.color.set(0xff2bd6);
   else player.aura.material.color.set(0x19f7ff);
   player.aura.position.y = player.y + 1.15;
+
+  /* poursuivant : visible seulement quand il est proche (devant la caméra) */
+  {
+    const C = chaser;
+    const vis = (S.mode === 'play') ? clamp((7.4 - C.dist) / 1.3, 0, 1) : 0;
+    C.group.visible = vis > 0.01;
+    if (C.group.visible) {
+      if (running) C.phase += clamp(S.speed / 2.8, 3, 8.5) * dt;
+      const cb = Math.abs(Math.sin(C.phase * Math.PI)) * .17;
+      C.group.position.set(laneToX(C.laneF), 0, S.z - C.dist);
+      C.mesh.position.y = C.size.h / 2 + cb + .05;
+      const cFlip = Math.floor(C.phase) % 2 === 1 ? -1 : 1;
+      C.mesh.scale.x = cFlip * C.baseSX;
+      C.mesh.rotation.z = Math.sin(C.phase * Math.PI * 2) * .06 +
+        (C.mode === 'catching' ? -.35 : 0);
+      const menace = C.mode === 'catching' ? 1.18 : 1 + Math.max(0, (6 - C.dist)) * .015;
+      C.mesh.scale.y = menace;
+      C.mesh.material.opacity = vis;
+      C.shadow.material.opacity = vis * .6;
+    }
+  }
 
   /* caméra Temple Run */
   const camX = px * .55 + (S.shake > 0 ? rnd(-1, 1) * S.shake * .5 : 0);
