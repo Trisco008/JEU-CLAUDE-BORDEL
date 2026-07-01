@@ -395,81 +395,180 @@ const CHARACTERS = [
 ];
 const charById = id => CHARACTERS.find(c => c.id === id) || CHARACTERS[0];
 
-/* ---------------- Audio (WebAudio, généré) ---------------- */
+/* ---------------- Audio (WebAudio) : synthé propre + moteur musical ---------------- */
 const AudioSys = {
-  ctx: null, master: null, musicTimer: null, step: 0,
+  ctx: null, master: null, musicTimer: null, step: 0, nextT: 0,
   init() {
     if (this.ctx) return;
     try {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const comp = this.ctx.createDynamicsCompressor();
+      comp.threshold.value = -14; comp.knee.value = 22; comp.ratio.value = 6;
+      comp.connect(this.ctx.destination);
       this.master = this.ctx.createGain();
-      this.master.gain.value = save.muted ? 0 : 0.5;
-      this.master.connect(this.ctx.destination);
+      this.master.gain.value = save.muted ? 0 : 0.55;
+      this.master.connect(comp);
+      const dl = this.ctx.createDelay(.5); dl.delayTime.value = .23;   // écho discret
+      const fb = this.ctx.createGain(); fb.gain.value = .18;
+      const wet = this.ctx.createGain(); wet.gain.value = .15;
+      this.master.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(comp);
     } catch (e) { this.ctx = null; }
   },
-  setMuted(m) { if (this.master) this.master.gain.value = m ? 0 : 0.5; },
-  tone(freq, dur, type, vol, slideTo) {
+  setMuted(m) { if (this.master) this.master.gain.value = m ? 0 : 0.55; },
+  now() { return this.ctx ? this.ctx.currentTime : 0; },
+  toneAt(freq, t, dur, type, vol, slideTo, cutoff) {
     if (!this.ctx || save.muted) return;
-    const t = this.ctx.currentTime;
     const o = this.ctx.createOscillator(), g = this.ctx.createGain();
-    o.type = type || 'square'; o.frequency.setValueAtTime(freq, t);
-    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
-    g.gain.setValueAtTime(vol || .15, t);
-    g.gain.exponentialRampToValueAtTime(.001, t + dur);
-    o.connect(g); g.connect(this.master);
-    o.start(t); o.stop(t + dur + .02);
+    o.type = type || 'triangle';
+    o.frequency.setValueAtTime(Math.max(20, freq), t);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t + dur);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol || .15, t + .008);
+    g.gain.exponentialRampToValueAtTime(.0008, t + dur);
+    let head = o;
+    if (cutoff) {
+      const f = this.ctx.createBiquadFilter();
+      f.type = 'lowpass'; f.frequency.value = cutoff; f.Q.value = .7;
+      o.connect(f); head = f;
+    }
+    head.connect(g); g.connect(this.master);
+    o.start(t); o.stop(t + dur + .05);
   },
-  noise(dur, vol) {
+  tone(f, d, ty, v, s) { if (this.ctx) this.toneAt(f, this.now(), d, ty, v, s); },
+  bell(f, t, dur, vol) {                     // cloche douce : fondamentale + partiels
+    this.toneAt(f, t, dur, 'sine', vol);
+    this.toneAt(f * 2.01, t, dur * .6, 'sine', vol * .35);
+    this.toneAt(f * 3.02, t, dur * .35, 'sine', vol * .12);
+  },
+  _nbuf: null,
+  noiseAt(t, dur, vol, ftype, ffreq, fslide) {
     if (!this.ctx || save.muted) return;
-    const t = this.ctx.currentTime, sr = this.ctx.sampleRate;
-    const buf = this.ctx.createBuffer(1, Math.max(1, sr * dur | 0), sr), d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
-    const src = this.ctx.createBufferSource(); src.buffer = buf;
-    const g = this.ctx.createGain(); g.gain.value = vol || .3;
-    src.connect(g); g.connect(this.master); src.start(t);
+    if (!this._nbuf) {
+      const sr = this.ctx.sampleRate, b = this.ctx.createBuffer(1, sr, sr), d = b.getChannelData(0);
+      for (let i = 0; i < sr; i++) d[i] = Math.random() * 2 - 1;
+      this._nbuf = b;
+    }
+    const src = this.ctx.createBufferSource(); src.buffer = this._nbuf; src.loop = true;
+    src.playbackRate.value = rnd(.9, 1.1);
+    const f = this.ctx.createBiquadFilter();
+    f.type = ftype || 'lowpass'; f.frequency.setValueAtTime(ffreq || 4000, t); f.Q.value = .6;
+    if (fslide) f.frequency.exponentialRampToValueAtTime(Math.max(40, fslide), t + dur);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(vol || .2, t);
+    g.gain.exponentialRampToValueAtTime(.0008, t + dur);
+    src.connect(f); f.connect(g); g.connect(this.master);
+    src.start(t); src.stop(t + dur + .02);
+  },
+  noise(d, v) { this.noiseAt(this.now(), d, v); },
+  kick(t, vol) {
+    this.toneAt(150, t, .16, 'sine', vol || .38, 42);
+    this.noiseAt(t, .03, (vol || .38) * .25, 'lowpass', 900);
+  },
+  hat(t, vol) { this.noiseAt(t, .035, vol || .06, 'highpass', 7000); },
+  snare(t, vol) {
+    this.noiseAt(t, .12, vol || .15, 'bandpass', 1900);
+    this.toneAt(190, t, .09, 'triangle', (vol || .15) * .6, 120);
   },
   sfx(name) {
+    if (!this.ctx || save.muted) return;
+    const t = this.now();
     switch (name) {
       case 'coin': {
         const c = Math.min(state.combo || 0, 24);
-        const f = 1100 * Math.pow(1.035, c);
-        this.tone(f, .09, 'square', .10, f * 1.5); break;
+        const f = 1174 * Math.pow(1.03, c);
+        this.bell(f, t, .16, .11);
+        this.bell(f * 1.335, t + .055, .14, .08);
+        break;
       }
-      case 'whoosh': this.noise(.12, .16); this.tone(1500, .1, 'sine', .05, 500); break;
-      case 'revive': [392,523,659,784,1046].forEach((f,i)=>setTimeout(()=>this.tone(f,.14,'square',.13),i*70)); break;
-      case 'level':  [523,784,1046,1568].forEach((f,i)=>setTimeout(()=>this.tone(f,.11,'triangle',.12),i*70)); break;
-      case 'jump':   this.tone(330, .18, 'square', .12, 700); break;
-      case 'jump2':  this.tone(520, .16, 'square', .12, 1100); break;
-      case 'slide':  this.tone(500, .15, 'sawtooth', .08, 180); break;
-      case 'lane':   this.tone(700, .05, 'triangle', .10); break;
-      case 'power':  this.tone(523, .1, 'square', .12, 1046);
-                     setTimeout(() => this.tone(784, .12, 'square', .12, 1568), 90); break;
-      case 'shield': this.tone(220, .25, 'sawtooth', .14, 880); break;
-      case 'crash':  this.noise(.45, .4); this.tone(160, .4, 'sawtooth', .2, 50); break;
-      case 'splash': this.noise(.2, .18); this.tone(300, .2, 'sine', .12, 90); break;
-      case 'thud':   this.noise(.15, .3); this.tone(90, .25, 'sine', .25, 40); break;
-      case 'chest':  [659,784,988,1319].forEach((f,i)=>setTimeout(()=>this.tone(f,.12,'square',.12),i*80)); break;
-      case 'click':  this.tone(900, .05, 'triangle', .1); break;
-      case 'fever':  [523,659,784,1046,1319].forEach((f,i)=>setTimeout(()=>this.tone(f,.1,'square',.13),i*60)); break;
-      case 'tom':    this.tone(95, .18, 'sine', .3, 55); this.noise(.05, .12); break;
-      case 'tungtung': [0, 170, 340].forEach(d => setTimeout(() => {
-                       this.tone(110, .16, 'sine', .34, 60); this.noise(.05, .15); }, d)); break;
+      case 'jump':   this.toneAt(290, t, .17, 'sine', .16, 640); this.noiseAt(t, .04, .05, 'highpass', 3000); break;
+      case 'jump2':  this.toneAt(490, t, .16, 'sine', .15, 1080); this.bell(1318, t + .05, .12, .07); break;
+      case 'slide':  this.noiseAt(t, .22, .17, 'lowpass', 2600, 500); this.toneAt(380, t, .14, 'sine', .07, 150); break;
+      case 'lane':   this.toneAt(660, t, .07, 'triangle', .1, 780); break;
+      case 'whoosh': this.noiseAt(t, .13, .15, 'bandpass', 2400, 600); break;
+      case 'power':  [523, 659, 784].forEach((f, i) => this.bell(f, t + i * .06, .18, .1)); break;
+      case 'shield': this.toneAt(220, t, .24, 'sawtooth', .1, 880, 1800); this.bell(880, t + .12, .18, .08); break;
+      case 'crash':  this.kick(t, .5); this.noiseAt(t, .5, .3, 'lowpass', 3800, 300);
+                     this.toneAt(130, t, .5, 'sine', .3, 38); break;
+      case 'splash': this.noiseAt(t, .26, .2, 'lowpass', 1500, 300); this.toneAt(270, t, .2, 'sine', .1, 80); break;
+      case 'thud':   this.kick(t, .5); this.noiseAt(t, .1, .18, 'lowpass', 1000); break;
+      case 'chest':  [659, 784, 988, 1319].forEach((f, i) => this.bell(f, t + i * .08, .22, .1)); break;
+      case 'click':  this.bell(1100, t, .07, .07); break;
+      case 'fever':  [523, 659, 784, 1046, 1319, 1568].forEach((f, i) => this.bell(f, t + i * .05, .16, .1)); break;
+      case 'level':  [523, 784, 1046, 1568].forEach((f, i) => this.bell(f, t + i * .07, .2, .1)); break;
+      case 'revive': [392, 523, 659, 784, 1046].forEach((f, i) => this.bell(f, t + i * .07, .2, .1)); break;
+      case 'tom':    this.toneAt(96, t, .18, 'sine', .3, 55); this.noiseAt(t, .04, .1, 'lowpass', 800); break;
+      case 'tungtung': [0, .17, .34].forEach(d => {
+                       this.toneAt(110, t + d, .16, 'sine', .32, 58);
+                       this.noiseAt(t + d, .04, .12, 'lowpass', 700); }); break;
     }
   },
-  BASS: [65.4,65.4,98,65.4, 82.4,82.4,98,123.5, 65.4,65.4,98,65.4, 87.3,87.3,110,123.5],
-  ARP:  [523,659,784,1046, 494,659,740,988, 523,659,784,1046, 440,554,659,880],
+
+  /* ----- moteur musical : prog. d'accords Am-F-C-G, 4 sections qui
+     s'enrichissent (batterie → +arpège → +mélodie), tempo lié à la vitesse,
+     percussions de tension quand Tung Tung est proche. Planifié sur
+     l'horloge audio (précis), pas sur setInterval. ----- */
+  CHORDS: [
+    [110.0, 130.81, 164.81, 220.0],    // Am
+    [87.31, 110.0, 130.81, 174.61],    // F
+    [130.81, 164.81, 196.0, 261.63],   // C
+    [98.0, 123.47, 146.83, 196.0],     // G
+  ],
+  PENT: [440, 523.25, 587.33, 659.25, 783.99, 880, 1046.5],
+  MELODIES: [
+    [0,-1,2,-1, 4,-1,3,2, 0,-1,2,3, 4,3,2,-1],
+    [4,-1,4,3, 2,-1,0,-1, 2,3,4,5, 4,-1,2,-1],
+    [0,2,4,-1, 5,4,3,-1, 2,3,4,2, 0,-1,-1,-1],
+    [6,-1,5,4, -1,4,3,2, 4,-1,2,0, 2,-1,-1,-1],
+  ],
   startMusic() {
     if (!this.ctx || this.musicTimer) return;
     this.step = 0;
+    this.nextT = this.now() + .06;
     this.musicTimer = setInterval(() => {
-      if (save.muted || state.mode !== 'play' || state.paused) return;
-      const s = this.step % 16;
-      this.tone(this.BASS[s], .22, 'triangle', .14);
-      if (s % 2 === 0) this.tone(this.ARP[s], .1, 'square', .045);
-      if (s % 2 === 1) this.noise(.025, .05);
-      if (s % 4 === 0) this.noise(.04, .08);
-      this.step++;
-    }, 140);
+      if (!this.ctx) return;
+      if (save.muted || state.mode !== 'play' || state.paused) {
+        this.nextT = Math.max(this.nextT, this.now() + .06);
+        return;
+      }
+      const horizon = this.now() + .32;
+      while (this.nextT < horizon) {
+        this.playStep(this.step, this.nextT);
+        const bpm = 126 + Math.min(40, state.speed * 1.1);
+        this.nextT += 60 / bpm / 4;          // double-croche
+        this.step++;
+      }
+    }, 90);
+  },
+  playStep(s, t) {
+    const st = s % 16;
+    const bar = Math.floor(s / 16) % 4;
+    const section = Math.floor(s / 64) % 4;
+    const chord = this.CHORDS[bar];
+    const chase = chaser.mode === 'close' || chaser.mode === 'catching';
+
+    /* batterie */
+    if (st % 4 === 0) this.kick(t, .32);
+    if (st === 4 || st === 12) this.snare(t, .12);
+    if (st % 2 === 1) this.hat(t, st % 4 === 3 ? .065 : .04);
+    if (chase && st % 4 === 2) this.toneAt(96, t, .14, 'sine', .18, 60);
+
+    /* basse qui pompe : fondamentale + quinte */
+    if (st % 4 === 0 || st === 6 || st === 14) {
+      const n = (st === 6 || st === 14) ? chord[2] / 2 : chord[0];
+      this.toneAt(n, t, .21, 'triangle', .19, undefined, 900);
+    }
+
+    /* arpège à partir de la section 1 */
+    if (section >= 1 && st % 2 === 0) {
+      const idx = [0, 1, 2, 3, 2, 1][Math.floor(st / 2) % 6];
+      this.toneAt(chord[idx] * 2, t, .1, 'square', .032, undefined, 2600);
+    }
+
+    /* mélodie : sections 2-3, coupée pendant la panique de poursuite */
+    if (section >= 2 && !chase) {
+      const mel = this.MELODIES[(bar + section) % 4][st];
+      if (mel >= 0) this.bell(this.PENT[mel], t, .22, .07);
+    }
   },
   stopMusic() { clearInterval(this.musicTimer); this.musicTimer = null; }
 };
@@ -1182,16 +1281,116 @@ const OB_DEFS = {
   fridge: { hit:'full',   full:false, label:'un frigo Camelo tombant' },
   puddle: { hit:'puddle', full:false, label:'une flaque de cappuccino' },
   portal: { hit:'high',   full:false, label:'un portail Saturnita' },
+  gap:    { hit:'hole',   full:false, label:'un gouffre du temple' },
+  barrier:{ hit:'low',    full:false, label:'une barrière spaghetti' },
+};
+
+/* ----- textures dédiées aux obstacles ----- */
+function barkTexture() {
+  const c = makeCanvas(128, 128), x = c.getContext('2d');
+  x.fillStyle = '#7a4e24'; x.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 14; i++) {                        // stries verticales
+    x.strokeStyle = `rgba(${irnd(40,70)},${irnd(22,40)},10,${rnd(.3,.6)})`;
+    x.lineWidth = rnd(1.5, 4);
+    x.beginPath(); x.moveTo(i * 9 + rnd(-3, 3), 0);
+    x.quadraticCurveTo(i * 9 + rnd(-8, 8), 64, i * 9 + rnd(-3, 3), 128); x.stroke();
+  }
+  for (let i = 0; i < 4; i++) {                         // nœuds du bois
+    const kx = rnd(10, 118), ky = rnd(10, 118);
+    x.strokeStyle = 'rgba(45,25,8,.7)'; x.lineWidth = 2;
+    x.beginPath(); x.ellipse(kx, ky, rnd(3, 6), rnd(5, 9), 0, 0, 7); x.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+function carvedTexture() {
+  const c = makeCanvas(128, 128), x = c.getContext('2d');
+  x.fillStyle = '#8a744a'; x.fillRect(0, 0, 128, 128);
+  for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) {   // gros blocs
+    const v = irnd(-14, 10);
+    x.fillStyle = `rgb(${150+v},${124+v},${80+v})`;
+    x.fillRect(i * 64 + 2, j * 64 + 2, 60, 60);
+  }
+  x.strokeStyle = 'rgba(66,48,22,.9)'; x.lineWidth = 3;       // glyphes gravés
+  const glyph = (gx, gy) => {
+    const k = irnd(0, 2);
+    x.beginPath();
+    if (k === 0) { x.arc(gx, gy, 9, 0, 5); x.lineTo(gx, gy); }
+    else if (k === 1) { x.moveTo(gx-9, gy+8); x.lineTo(gx, gy-9); x.lineTo(gx+9, gy+8); x.closePath(); }
+    else { x.moveTo(gx-9, gy); x.lineTo(gx+9, gy); x.moveTo(gx, gy-9); x.lineTo(gx, gy+9); x.rect(gx-5, gy-5, 10, 10); }
+    x.stroke();
+  };
+  glyph(32, 32); glyph(96, 32); glyph(32, 96); glyph(96, 96);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+function metalTexture() {
+  const c = makeCanvas(64, 64), x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, 64, 0);
+  g.addColorStop(0, '#a8d4e0'); g.addColorStop(.5, '#d8f0f8'); g.addColorStop(1, '#9cc4d4');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  x.fillStyle = 'rgba(255,255,255,.35)';
+  x.fillRect(8, 0, 5, 64); x.fillRect(40, 0, 3, 64);
+  return new THREE.CanvasTexture(c);
+}
+function coffeeTexture() {
+  const c = makeCanvas(64, 64), x = c.getContext('2d');
+  const g = x.createRadialGradient(32, 32, 4, 32, 32, 32);
+  g.addColorStop(0, '#4a2c12'); g.addColorStop(.7, '#6b4423'); g.addColorStop(1, '#8a6034');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  x.strokeStyle = 'rgba(232,212,176,.8)'; x.lineWidth = 3;    // spirale de crème
+  x.beginPath();
+  for (let a = 0; a < 12; a += .3) x.lineTo(32 + a * 1.8 * Math.cos(a), 32 + a * 1.8 * Math.sin(a));
+  x.stroke();
+  return new THREE.CanvasTexture(c);
+}
+const MAT2 = {
+  bark: new THREE.MeshLambertMaterial({ map: barkTexture() }),
+  barkEnd: new THREE.MeshLambertMaterial({ color: 0xc9a06a }),
+  carved: new THREE.MeshLambertMaterial({ map: carvedTexture() }),
+  metal: new THREE.MeshLambertMaterial({ map: metalTexture() }),
+  coffee: new THREE.MeshLambertMaterial({ map: coffeeTexture() }),
+  goldGlow: new THREE.MeshBasicMaterial({ color: 0xffd35c }),
+  eyeGlow: new THREE.MeshBasicMaterial({ color: 0xfff2b0 }),
+  pupil: new THREE.MeshBasicMaterial({ color: 0x1a1a1a }),
+  pit: new THREE.MeshBasicMaterial({ color: 0x0a0602 }),
+  mush: new THREE.MeshLambertMaterial({ color: 0xd94f4f }),
+  rope: new THREE.MeshLambertMaterial({ color: 0xd8b878 }),
+  steam: new THREE.SpriteMaterial({ map: TEX.particle, transparent: true, opacity: .35, color: 0xf5eede, depthWrite: false }),
 };
 
 const obFactories = {
   log() {
     const g = new THREE.Group();
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.55, .55, LANE_W * 3 + 1.2, 10), MAT.wood);
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(.55, .6, LANE_W * 3 + 1.2, 12), MAT2.bark);
     trunk.rotation.z = Math.PI / 2;
     trunk.position.y = .55;
     g.add(trunk);
-    for (let i = 0; i < 5; i++) {                       // spaghetti dessus
+    for (const side of [-1, 1]) {                        // tranches claires aux bouts
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(.56, .56, .1, 12), MAT2.barkEnd);
+      cap.rotation.z = Math.PI / 2;
+      cap.position.set(side * (LANE_W * 1.5 + .62), .55, 0);
+      g.add(cap);
+    }
+    for (let i = 0; i < 3; i++) {                        // mousse
+      const m = new THREE.Mesh(new THREE.SphereGeometry(rnd(.2, .34), 7, 5), MAT.vine);
+      m.position.set(rnd(-3.4, 3.4), 1.0, rnd(-.3, .3));
+      m.scale.y = .5;
+      g.add(m);
+    }
+    for (let i = 0; i < 2; i++) {                        // champignons
+      const st = new THREE.Mesh(new THREE.CylinderGeometry(.06, .08, .22, 6), MAT.foam);
+      const sx2 = rnd(-3, 3);
+      st.position.set(sx2, 1.18, rnd(-.2, .2));
+      g.add(st);
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(.15, 8, 5), MAT2.mush);
+      cap.position.set(sx2, 1.3, st.position.z);
+      cap.scale.y = .6;
+      g.add(cap);
+    }
+    for (let i = 0; i < 5; i++) {                        // spaghetti dessus
       const s = new THREE.Mesh(new THREE.CylinderGeometry(.06, .06, rnd(1.2, 2.4), 5), MAT.spaghetti);
       s.position.set(rnd(-3.6, 3.6), 1.05, rnd(-.25, .25));
       s.rotation.z = rnd(1.2, 1.9);
@@ -1203,17 +1402,30 @@ const obFactories = {
   arch() {
     const g = new THREE.Group();
     for (const side of [-1, 1]) {
-      const pil = new THREE.Mesh(new THREE.BoxGeometry(.9, 3.4, .9), MAT.wall);
+      const pil = new THREE.Mesh(new THREE.BoxGeometry(.95, 3.4, .95), MAT2.carved);
       pil.position.set(side * (LANE_W * 1.5 + .6), 1.7, 0);
       g.add(pil);
+      const base = new THREE.Mesh(new THREE.BoxGeometry(1.3, .35, 1.3), MAT.stoneDark);
+      base.position.set(pil.position.x, .17, 0);
+      g.add(base);
+      const trim = new THREE.Mesh(new THREE.BoxGeometry(1.15, .16, 1.15), MAT2.goldGlow);
+      trim.position.set(pil.position.x, 3.05, 0);
+      g.add(trim);
+      const fl = new THREE.Sprite(flameMat);              // torches sur les piliers
+      fl.scale.set(.9, .9, 1);
+      fl.position.set(pil.position.x, 3.75, 0);
+      g.add(fl);
     }
-    const bar = new THREE.Mesh(new THREE.BoxGeometry(LANE_W * 3 + 2.6, 1.5, 1.1), MAT.wall);
-    bar.position.y = 1.25 + .75;                        // dessous de barre à y=1.25
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(LANE_W * 3 + 2.6, 1.5, 1.1), MAT2.carved);
+    bar.position.y = 1.25 + .75;                          // dessous de barre à y=1.25
     g.add(bar);
+    const band = new THREE.Mesh(new THREE.BoxGeometry(LANE_W * 3 + 2.7, .18, 1.16), MAT2.goldGlow);
+    band.position.y = 1.34;
+    g.add(band);
     const top = new THREE.Mesh(new THREE.BoxGeometry(LANE_W * 3 + 3.2, .5, 1.5), MAT.stoneDark);
     top.position.y = 3.0;
     g.add(top);
-    for (let i = 0; i < 6; i++) {                       // lianes qui pendent
+    for (let i = 0; i < 6; i++) {                         // lianes qui pendent
       const v = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, rnd(.5, 1.0), 4), MAT.vine);
       v.position.set(rnd(-4, 4), 1.25 - rnd(.2, .45), rnd(-.3, .3));
       g.add(v);
@@ -1222,65 +1434,116 @@ const obFactories = {
   },
   wall() {
     const g = new THREE.Group();
-    const w = new THREE.Mesh(new THREE.BoxGeometry(2.35, 3.1, .9), MAT.wall);
+    const w = new THREE.Mesh(new THREE.BoxGeometry(2.35, 3.1, .9), MAT2.carved);
     w.position.y = 1.55;
     g.add(w);
-    const nose = new THREE.Mesh(new THREE.ConeGeometry(.34, 1.1, 8), MAT.nose);
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(.4, 1.3, 8), MAT.nose);
     nose.rotation.x = Math.PI / 2;
-    nose.position.set(0, 2.0, -.95);
+    nose.position.set(0, 1.95, -1.0);
     g.add(nose);
-    for (const ex of [-.5, .5]) {                       // yeux
-      const eye = new THREE.Mesh(new THREE.CylinderGeometry(.22, .22, .1, 8), MAT.teeth);
+    for (const ex of [-.52, .52]) {                       // yeux lumineux + pupilles
+      const eye = new THREE.Mesh(new THREE.CylinderGeometry(.24, .24, .1, 10), MAT2.eyeGlow);
       eye.rotation.x = Math.PI / 2;
-      eye.position.set(ex, 2.45, -.5);
+      eye.position.set(ex, 2.45, -.48);
       g.add(eye);
+      const pu = new THREE.Mesh(new THREE.CylinderGeometry(.1, .1, .12, 8), MAT2.pupil);
+      pu.rotation.x = Math.PI / 2;
+      pu.position.set(ex, 2.45, -.5);
+      g.add(pu);
     }
-    const bush = new THREE.Mesh(new THREE.SphereGeometry(1.05, 8, 6), MAT.vine);
-    bush.position.y = 3.4; bush.scale.y = .6;
-    g.add(bush);
+    for (const [bx, by, br] of [[0, 3.45, .95], [-.8, 3.25, .6], [.8, 3.25, .6]]) {
+      const bush = new THREE.Mesh(new THREE.SphereGeometry(br, 8, 6), MAT.vine);
+      bush.position.set(bx, by, 0); bush.scale.y = .62;
+      g.add(bush);
+    }
     return g;
   },
   croc() {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.7, .75, 2.6), MAT.croc);
-    body.position.y = .45;
+    const body = new THREE.Mesh(new THREE.SphereGeometry(1.1, 10, 8), MAT.croc);
+    body.scale.set(.8, .5, 1.3);
+    body.position.y = .55;
     g.add(body);
-    const jaw = new THREE.Mesh(new THREE.BoxGeometry(1.3, .35, 1.4), MAT.croc);
-    jaw.position.set(0, 1.05, -1.1);
+    const belly = new THREE.Mesh(new THREE.SphereGeometry(1.0, 10, 8), MAT.crocBelly);
+    belly.scale.set(.68, .35, 1.15);
+    belly.position.y = .42;
+    g.add(belly);
+    const snout = new THREE.Mesh(new THREE.BoxGeometry(1.0, .4, 1.2), MAT.croc);
+    snout.position.set(0, .62, -1.55);
+    g.add(snout);
+    const jaw = new THREE.Mesh(new THREE.BoxGeometry(1.05, .3, 1.25), MAT.croc);
+    jaw.position.set(0, 1.0, -1.35);
     jaw.rotation.x = -.55;
     g.add(jaw);
     g.jaw = jaw;
     for (let i = -2; i <= 2; i++) {
       const t = new THREE.Mesh(new THREE.ConeGeometry(.09, .3, 4), MAT.teeth);
-      t.position.set(i * .26, .75, -1.65);
+      t.position.set(i * .2, .85, -2.05);
       g.add(t);
     }
-    const tail = new THREE.Mesh(new THREE.ConeGeometry(.5, 1.6, 6), MAT.croc);
+    for (const ex of [-.4, .4]) {                         // yeux globuleux
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(.2, 8, 6), MAT.teeth);
+      eye.position.set(ex, 1.15, -.9);
+      g.add(eye);
+      const pu = new THREE.Mesh(new THREE.SphereGeometry(.09, 6, 5), MAT2.pupil);
+      pu.position.set(ex, 1.2, -1.05);
+      g.add(pu);
+    }
+    for (let i = 0; i < 4; i++) {                         // crête du dos
+      const ridge = new THREE.Mesh(new THREE.ConeGeometry(.16, .35, 4), MAT.croc);
+      ridge.position.set(0, 1.05 - i * .06, -.2 + i * .55);
+      g.add(ridge);
+    }
+    for (const [lx, lz] of [[-.7, -.6], [.7, -.6], [-.7, .8], [.7, .8]]) {  // pattes
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(.16, .2, .5, 6), MAT.croc);
+      leg.position.set(lx, .25, lz);
+      g.add(leg);
+    }
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(.5, 1.8, 6), MAT.croc);
     tail.rotation.x = Math.PI / 2;
-    tail.position.set(0, .4, 2.0);
+    tail.position.set(0, .45, 2.2);
     g.add(tail);
     return g;
   },
   drum() {
     const g = new THREE.Group();
-    const d = new THREE.Mesh(new THREE.CylinderGeometry(.72, .72, 1.5, 12), MAT.wood);
+    const d = new THREE.Mesh(new THREE.CylinderGeometry(.72, .72, 1.5, 14), MAT2.bark);
     d.rotation.z = Math.PI / 2;
     d.position.y = .72;
     g.add(d);
     for (const side of [-0.76, 0.76]) {
-      const cap = new THREE.Mesh(new THREE.CylinderGeometry(.74, .74, .06, 12), MAT.foam);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(.74, .74, .06, 14), MAT.foam);
       cap.rotation.z = Math.PI / 2;
       cap.position.set(side, .72, 0);
       g.add(cap);
+    }
+    for (let i = 0; i < 8; i++) {                         // laçage en zigzag
+      const r = new THREE.Mesh(new THREE.CylinderGeometry(.035, .035, 1.55, 4), MAT2.rope);
+      const a = i / 8 * Math.PI * 2;
+      r.rotation.z = Math.PI / 2;
+      r.rotation.x = .5 * (i % 2 ? 1 : -1);
+      r.position.set(0, .72 + Math.sin(a) * .62, Math.cos(a) * .62);
+      g.add(r);
     }
     g.spin = d;
     return g;
   },
   fridge() {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.7, 1.2), MAT.fridge);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.7, 1.2), MAT2.metal);
     body.position.y = 1.35;
     g.add(body);
+    /* décorations attachées au corps (suivent la chute) */
+    const face = new THREE.Sprite(new THREE.SpriteMaterial({ map: emojiTexture('🐫', 96), transparent: true }));
+    face.scale.set(.85, .85, 1);
+    face.position.set(0, .45, -.68);
+    body.add(face);
+    for (const [mx, my, mc] of [[-.45, -.3, 0xd94f4f], [.4, -.55, 0x3f8f4f], [.15, -.95, 0xffd35c]]) {
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(.18, .18, .06),
+        new THREE.MeshBasicMaterial({ color: mc }));
+      mag.position.set(mx, my, -.62);
+      body.add(mag);
+    }
     const door = new THREE.Mesh(new THREE.BoxGeometry(1.54, .08, 1.24), MAT.fridgeDark);
     door.position.y = 1.7;
     g.add(door);
@@ -1300,23 +1563,71 @@ const obFactories = {
   },
   puddle() {
     const g = new THREE.Group();
-    const p = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, .07, 16), MAT.puddle);
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, .07, 18), MAT2.coffee);
     p.position.y = .05;
     g.add(p);
-    const foam = new THREE.Mesh(new THREE.CylinderGeometry(.5, .5, .08, 12), MAT.foam);
-    foam.position.set(.2, .06, .15);
-    g.add(foam);
+    for (const [sx2, sy2] of [[-.3, 1.0], [.35, 1.3]]) {   // vapeur
+      const st = new THREE.Sprite(MAT2.steam);
+      st.scale.set(.7, 1.1, 1);
+      st.position.set(sx2, sy2, 0);
+      g.add(st);
+    }
     return g;
   },
   portal() {
     const g = new THREE.Group();
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.15, .14, 8, 24), MAT.portal);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(1.15, .14, 8, 26), MAT.portal);
     ring.position.y = 2.25;
     g.add(ring);
+    const ring2 = new THREE.Mesh(new THREE.TorusGeometry(1.38, .05, 6, 26), MAT2.goldGlow);
+    ring2.position.y = 2.25;
+    g.add(ring2);
+    g.ring2 = ring2;
     const disc = new THREE.Mesh(new THREE.CircleGeometry(1.0, 20), MAT.portalIn);
     disc.position.y = 2.25;
     g.add(disc);
+    for (let i = 0; i < 4; i++) {                          // étoiles satellites
+      const star = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.particle, transparent: true, opacity: .8, color: 0xd8b0ff, depthWrite: false }));
+      star.scale.set(.3, .3, 1);
+      const a = i / 4 * Math.PI * 2;
+      star.position.set(Math.cos(a) * 1.6, 2.25 + Math.sin(a) * 1.6, 0);
+      g.add(star);
+    }
     g.ring = ring;
+    return g;
+  },
+  gap() {
+    const g = new THREE.Group();
+    const pit = new THREE.Mesh(new THREE.PlaneGeometry(2.3, 3.4), MAT2.pit);
+    pit.rotation.x = -Math.PI / 2;
+    pit.position.y = .02;
+    g.add(pit);
+    for (let i = 0; i < 7; i++) {                          // dalles brisées au bord
+      const a = i / 7 * Math.PI * 2;
+      const b = new THREE.Mesh(new THREE.BoxGeometry(rnd(.3, .55), .14, rnd(.3, .55)), MAT.stoneDark);
+      b.position.set(Math.cos(a) * 1.15, .07, Math.sin(a) * 1.6);
+      b.rotation.y = rnd(0, 1.5);
+      g.add(b);
+    }
+    return g;
+  },
+  barrier() {
+    const g = new THREE.Group();
+    for (const side of [-1, 1]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(.09, .11, 1.0, 6), MAT2.bark);
+      post.position.set(side * 1.05, .5, 0);
+      g.add(post);
+    }
+    const rail = new THREE.Mesh(new THREE.CylinderGeometry(.16, .16, 2.3, 8), MAT2.bark);
+    rail.rotation.z = Math.PI / 2;
+    rail.position.y = .82;
+    g.add(rail);
+    for (let i = 0; i < 3; i++) {                          // spaghetti qui pendent
+      const s = new THREE.Mesh(new THREE.CylinderGeometry(.05, .05, rnd(.5, .9), 4), MAT.spaghetti);
+      s.position.set(rnd(-.9, .9), .55, rnd(-.1, .1));
+      s.rotation.z = rnd(-.4, .4);
+      g.add(s);
+    }
     return g;
   },
 };
@@ -1507,6 +1818,38 @@ function spawnPattern(zSuggested) {
     return;
   }
 
+  /* ----- événements spéciaux : le spawn change complètement ----- */
+  if (S.event === 'brainRain') {
+    coinZigzag(zBase);
+    coinLine(irnd(0, 2), zBase + 8, 6);
+    if (Math.random() < .3) placePickup(pick(['magnet','mult','fever']), irnd(0, 2), zBase + 14);
+    S.lastSpawnZ = Math.max(S.lastSpawnZ, zBase + 28);
+    return;
+  }
+  if (S.event === 'crocs') {
+    zBase = vertGate(zBase, 'jump');
+    const lanes = [0, 1, 2];
+    const l1 = pick(lanes);
+    placeObstacle('croc', l1, zBase);
+    if (Math.random() < .6) {
+      const l2 = pick(lanes.filter(l => l !== l1));
+      placeObstacle('croc', l2, zBase);
+      const free = lanes.find(l => l !== l1 && l !== l2);
+      coinArc(free, zBase);
+    } else coinArc(pick(lanes.filter(l => l !== l1)), zBase);
+    S.lastSpawnZ = Math.max(S.lastSpawnZ, zBase + 8);
+    return;
+  }
+  if (S.event === 'fridges') {
+    const lanes = [0, 1, 2];
+    const l1 = pick(lanes);
+    placeObstacle('fridge', l1, zBase);
+    if (hard > .3 && Math.random() < .5) placeObstacle('fridge', pick(lanes.filter(l => l !== l1)), zBase);
+    coinLine(pick(lanes.filter(l => l !== l1)), zBase + 4, 4);
+    S.lastSpawnZ = Math.max(S.lastSpawnZ, zBase + 12);
+    return;
+  }
+
   const r = Math.random();
   if (r < .17) {                                          // tronc pleine largeur → SAUT
     zBase = vertGate(zBase, 'jump');
@@ -1518,20 +1861,29 @@ function spawnPattern(zSuggested) {
     placeObstacle('arch', 0, zBase);
     if (Math.random() < .4) { coinLine(irnd(0, 2), zBase + 5, 4); zEnd = zBase + 14; }
   } else if (r < .60) {                                   // obstacles de voie
-    const types = ['wall','croc','drum','fridge','puddle','portal'];
+    /* la palette d'obstacles change selon la zone traversée */
+    const ZONE_LANE_TYPES = [
+      ['wall','croc','drum','fridge','puddle','portal','gap','barrier'],  // Temple Spaghetti
+      ['wall','wall','croc','puddle','barrier','gap','portal','drum'],    // Jungle Patapim
+      ['croc','croc','fridge','drum','barrier','gap','wall','puddle'],    // Base Bombardino
+      ['puddle','puddle','portal','wall','barrier','drum','gap','croc'],  // Dojo Cappuccino
+      ['portal','portal','gap','gap','fridge','wall','croc','barrier'],   // Anneaux Saturnita
+    ];
+    const types = ZONE_LANE_TYPES[S.zone] || ZONE_LANE_TYPES[0];
     const lanes = [0, 1, 2];
     const n = (hard > .25 && Math.random() < .3 + hard * .45) ? 2 : 1;
     const used = [], chosen = [];
     for (let i = 0; i < n; i++) {
       let type = pick(types);
-      if (i === 1 && (OB_DEFS[type].hit === 'full')) type = pick(['croc','drum','puddle','portal']);
+      if (i === 1 && (OB_DEFS[type].hit === 'full')) type = pick(['croc','drum','puddle','portal','gap','barrier']);
       if (type === 'fridge' && S.dist < 350) type = 'croc';
+      if (type === 'gap' && S.dist < 250) type = 'barrier';
       chosen.push(type);
     }
     /* si la rangée peut imposer une action verticale, on respecte la
        transition (le joueur a pu choisir la voie portail = glissade) */
     const rowAction = chosen.includes('portal') ? 'slide'
-                    : chosen.some(t => OB_DEFS[t].hit === 'low') ? 'jump' : null;
+                    : chosen.some(t => OB_DEFS[t].hit === 'low' || OB_DEFS[t].hit === 'hole') ? 'jump' : null;
     zBase = vertGate(zBase, rowAction);
     for (const type of chosen) {
       const lane = pick(lanes.filter(l => !used.includes(l)));
@@ -1589,6 +1941,7 @@ function startRun() {
   state.powMax = {};
   state.combo = 0; state.comboT = 0; state.comboBest = 0;
   state.revives = 0; state.reviveT = 0; state.milestone = 0;
+  state.event = null; state.eventUntil = 0; state.nextEvent = 450;
   state.char = charById(save.selected);
   player.lane = 1; player.laneF = 1;
   player.y = 0; player.vy = 0; player.sliding = 0; player.usedDouble = false;
@@ -1867,6 +2220,19 @@ function update(dt) {
   S.curve += (S.curveTarget - S.curve) * Math.min(1, dt * .5);
   S.hill += (S.hillTarget - S.hill) * Math.min(1, dt * .45);
 
+  /* événements spéciaux : séquences de ~160 m qui cassent la routine */
+  if (!S.event && S.dist > S.nextEvent && S.scriptStep >= 3) {
+    S.event = pick(['brainRain', 'crocs', 'fridges']);
+    S.eventUntil = S.dist + 160;
+    const names = { brainRain: '🧠 PLUIE DE CERVEAUX !!', crocs: '🐊 INVASION CROCODILO !', fridges: '🧊 TEMPÊTE DE FRIGOS !' };
+    addFloater(names[S.event], '#ff2bd6');
+    AudioSys.sfx('fever');
+  }
+  if (S.event && S.dist > S.eventUntil) {
+    S.event = null;
+    S.nextEvent = S.dist + rnd(550, 900);
+  }
+
   /* zones : ambiance toutes les 800 m */
   const zi = Math.floor(S.dist / 800) % ZONES.length;
   if (zi !== S.zone) { S.zone = zi; addFloater('🏛️ ' + ZONES[zi].name, '#ffd35c'); }
@@ -1945,6 +2311,7 @@ function update(dt) {
         o.g.jaw.rotation.x = -.55 + Math.sin(S.t * 6 + o.z) * .25;
       } else if (o.type === 'portal') {
         o.g.ring.rotation.z += dt * 2;
+        if (o.g.ring2) o.g.ring2.rotation.z -= dt * 3.2;
       } else if (o.type === 'fridge' && !o.landed) {
         if (!o.started && o.z - S.z < 40) o.started = true;   // chute sous les yeux du joueur
         if (o.started) {
@@ -2026,6 +2393,7 @@ function update(dt) {
       if (o.type === 'fridge' && !o.landed) continue;
       const h = o.def.hit;
       if (h === 'low'    && player.y > 0.95) { o.closeCall = true; continue; }
+      if (h === 'hole'   && player.y > 0.3)  { o.closeCall = true; continue; }
       if (h === 'puddle' && player.y > 0.5)  continue;
       if (h === 'high'   && player.sliding > 0) { o.closeCall = true; continue; }
       hitObstacle(o);
