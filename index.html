@@ -38,6 +38,30 @@
   #multBox{top:calc(max(10px,env(safe-area-inset-top)) + clamp(50px,12vw,76px));left:12px;
     font-size:clamp(14px,3.5vw,20px);color:var(--gold);display:none;}
   #powBox{position:absolute;bottom:max(14px,env(safe-area-inset-bottom));left:12px;display:flex;gap:8px;}
+  #comboBox{top:calc(max(10px,env(safe-area-inset-top)) + clamp(46px,11vw,70px));left:50%;transform:translateX(-50%);
+    color:#ff9a3d;text-shadow:0 0 12px #ff6a00,0 2px 3px #000;display:none;animation:comboPulse .5s ease-in-out infinite;}
+  @keyframes comboPulse{0%,100%{transform:translateX(-50%) scale(1)}50%{transform:translateX(-50%) scale(1.09)}}
+
+  /* ---------- Missions ---------- */
+  .mTitle{font-weight:900;color:var(--gold);font-size:clamp(14px,4vw,19px);margin-top:14px;text-shadow:0 0 8px rgba(255,211,92,.6);}
+  .mLine{display:flex;align-items:center;gap:8px;margin:6px auto;max-width:min(460px,92vw);
+    font-size:clamp(11px,3.2vw,14px);font-weight:700;color:#ffe9b0;text-align:left;}
+  .mLine>span:first-child{flex:1;}
+  .mLine b{color:var(--gold);}
+  .mBarW{width:clamp(60px,18vw,110px);height:9px;background:rgba(0,0,0,.5);border-radius:5px;overflow:hidden;border:1px solid #6b5226;flex:none;}
+  .mBar{height:100%;background:linear-gradient(90deg,var(--jungle),#7ee89a);box-shadow:0 0 6px var(--jungle);}
+  .mPct{color:#d9c08a;font-size:.85em;min-width:52px;text-align:right;flex:none;}
+
+  /* ---------- Revive ---------- */
+  #reviveTitle{font-size:clamp(30px,9vw,58px);font-weight:900;color:var(--pink);
+    text-shadow:0 0 20px var(--pink),0 4px 0 #500030;transform:rotate(-2deg);animation:wob 1s ease-in-out infinite;}
+  #reviveBarWrap{width:min(300px,70vw);height:10px;background:rgba(0,0,0,.55);border:1px solid var(--gold-dark);
+    border-radius:6px;overflow:hidden;margin-top:14px;}
+  #reviveBar{height:100%;width:100%;background:linear-gradient(90deg,#ff2bd6,#ffd35c);box-shadow:0 0 8px var(--pink);}
+
+  #upgGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;width:min(900px,94vw);margin-top:10px;}
+  #menuLevel{margin-top:8px;font-size:clamp(13px,3.6vw,18px);color:var(--teal);text-shadow:0 0 8px rgba(25,200,200,.7);font-weight:800;}
+  #goCombo{color:#ff9a3d;font-weight:900;margin-top:4px;font-size:clamp(14px,4vw,20px);text-shadow:0 0 8px #ff6a00;}
   .powIcon{
     width:clamp(44px,11vw,58px);height:clamp(44px,11vw,58px);border-radius:12px;
     background:rgba(25,15,5,.78);border:2px solid var(--gold);
@@ -165,6 +189,7 @@
   <div class="hudBox" id="scoreBox">SCORE 0<small id="distBox">0 m</small></div>
   <div class="hudBox" id="brainBox">🧠 0</div>
   <div class="hudBox" id="multBox">x2 SCORE !</div>
+  <div class="hudBox" id="comboBox">🔥 COMBO x3</div>
   <div id="powBox"></div>
 </div>
 <div id="floatLayer"></div>
@@ -182,8 +207,10 @@
   <div class="subtitle">🏛️ Temple Edition — cours, esquive, deviens légende brainrot 🧠</div>
   <div id="menuHigh">🏆 Record : 0</div>
   <div id="menuBrains">🧠 Cerveaux : 0</div>
+  <div id="menuLevel"></div>
   <button class="bigBtn" id="playBtn">▶ COURIR</button>
-  <button class="medBtn" id="charsBtn">👥 Personnages</button>
+  <button class="medBtn" id="charsBtn">👥 Personnages &amp; Améliorations</button>
+  <div id="menuMissions"></div>
   <div id="hint">
     🖥️ ←/→ ou A/D : voie · ↑/W/Espace : sauter · ↓/S : glisser · P : pause<br>
     📱 Swipe ←/→/↑/↓ — 🖱️ glisser la souris marche aussi
@@ -207,6 +234,8 @@
   <div class="subtitle" style="font-size:clamp(22px,6vw,34px);">👥 PERSONNAGES BRAINROT</div>
   <div id="shopBrains">🧠 0</div>
   <div id="charGrid"></div>
+  <div class="subtitle" style="margin-top:18px;">⚡ AMÉLIORATIONS DE POWER-UPS</div>
+  <div id="upgGrid"></div>
   <button class="medBtn" id="shopBack">← Retour</button>
 </div>
 
@@ -228,9 +257,21 @@
     <div class="statLine">🧠 ramassés : <b id="goBrains">0</b></div>
     <div class="statLine">🏆 Record : <b id="goHigh">0</b></div>
     <div class="statLine" id="goCause" style="color:#ff9a9a;font-size:clamp(13px,3.5vw,17px);"></div>
+    <div id="goCombo"></div>
   </div>
   <button class="bigBtn" id="retryBtn">🔁 RE-COURIR</button>
+  <div id="goMissions" style="margin-top:10px;"></div>
   <button class="medBtn" id="goMenuBtn">🏠 Menu</button>
+</div>
+
+<!-- REVIVE -->
+<div class="overlay" id="revive">
+  <div id="reviveTitle">💥 CONTINUER ?</div>
+  <div class="subtitle">Tung Tung Tung Sahur approche…</div>
+  <button class="bigBtn" id="reviveBtn" style="background:linear-gradient(180deg,#ffb3e8,var(--pink) 60%,#a01587);color:#fff;">
+    ❤️ REVIVRE — 🧠 <span id="reviveCost">60</span></button>
+  <div id="reviveBarWrap"><div id="reviveBar"></div></div>
+  <button class="medBtn" id="reviveNo">💀 Abandonner</button>
 </div>
 
 <script>
@@ -258,14 +299,72 @@ window.SPRITE_DATA = {"back_ballerina": "data:image/png;base64,iVBORw0KGgoAAAANS
 /* ---------------- Sauvegarde ---------------- */
 const SAVE_KEY = 'brainrotRunSaveV1';
 const save = (() => {
-  const def = { high: 0, brains: 0, unlocked: ['tralalero'], selected: 'tralalero', muted: false, tutoSeen: false };
+  const def = { high: 0, brains: 0, unlocked: ['tralalero'], selected: 'tralalero', muted: false, tutoSeen: false,
+    level: 0, bestDist: 0, missions: [],
+    upg: { magnet: 0, shield: 0, boost: 0, mult: 0 },
+    daily: { date: '', streak: 0 } };
   try {
     const s = JSON.parse(localStorage.getItem(SAVE_KEY));
-    if (s && typeof s === 'object') return Object.assign(def, s);
+    if (s && typeof s === 'object') {
+      const o = Object.assign(def, s);
+      o.upg = Object.assign({ magnet: 0, shield: 0, boost: 0, mult: 0 }, s.upg || {});
+      o.daily = Object.assign({ date: '', streak: 0 }, s.daily || {});
+      if (!Array.isArray(o.missions)) o.missions = [];
+      return o;
+    }
   } catch (e) {}
   return def;
 })();
 function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) {} }
+
+/* ---------------- Missions (persistantes, complétées en pleine course) ---------------- */
+const MISSION_TYPES = {
+  brains:  { label: n => `Ramasse ${n} 🧠`,                base: 60,   mul: 1.55, stat: 'brains' },
+  dist:    { label: n => `Cours ${n} m au total`,          base: 900,  mul: 1.55, stat: 'dist' },
+  jumps:   { label: n => `Saute ${n} fois`,                base: 25,   mul: 1.5,  stat: 'jumps' },
+  slides:  { label: n => `Glisse ${n} fois`,               base: 18,   mul: 1.5,  stat: 'slides' },
+  near:    { label: n => `Frôle ${n} obstacles ⚡`,        base: 8,    mul: 1.5,  stat: 'near' },
+  pow:     { label: n => `Attrape ${n} power-ups`,         base: 5,    mul: 1.45, stat: 'pow' },
+  combo:   { label: n => `Atteins un combo de ${n}`,       base: 12,   mul: 1.3,  stat: 'comboMax', once: true },
+  runDist: { label: n => `Cours ${n} m en UNE partie`,     base: 500,  mul: 1.4,  stat: 'runDist',  once: true },
+};
+function newMission(tier) {
+  const keys = Object.keys(MISSION_TYPES);
+  const used = save.missions.map(m => m.type);
+  const pool = keys.filter(k => !used.includes(k));
+  const type = pool[Math.floor(Math.random() * pool.length)] || keys[Math.floor(Math.random() * keys.length)];
+  const t = MISSION_TYPES[type];
+  const goal = Math.round(t.base * Math.pow(t.mul, tier));
+  return { type, goal, prog: 0, reward: 40 + Math.round(tier * 35 + goal * 0.12), tier };
+}
+function ensureMissions() { while (save.missions.length < 3) save.missions.push(newMission(save.level)); }
+ensureMissions(); persist();
+function trackStat(stat, amount, isMax) {
+  let done = false;
+  for (let i = 0; i < save.missions.length; i++) {
+    const m = save.missions[i], t = MISSION_TYPES[m.type];
+    if (!t || t.stat !== stat || m.prog >= m.goal) continue;
+    m.prog = t.once || isMax ? Math.max(m.prog, amount) : m.prog + amount;
+    if (m.prog >= m.goal) {
+      save.brains += m.reward;
+      save.level++;
+      addFloater(`🎯 MISSION ! +${m.reward} 🧠`, '#ffd35c');
+      AudioSys.sfx('chest');
+      save.missions[i] = newMission(save.level);
+      done = true;
+    }
+  }
+  if (done) persist();
+}
+function missionsHTML() {
+  return save.missions.map(m => {
+    const t = MISSION_TYPES[m.type];
+    const pct = Math.min(100, m.prog / m.goal * 100);
+    return `<div class="mLine"><span>${t.label(m.goal)} <b>+${m.reward}🧠</b></span>
+      <div class="mBarW"><div class="mBar" style="width:${pct}%"></div></div>
+      <span class="mPct">${Math.min(Math.floor(m.prog), m.goal)}/${m.goal}</span></div>`;
+  }).join('');
+}
 
 /* ---------------- Personnages ---------------- */
 const CHARACTERS = [
@@ -331,7 +430,14 @@ const AudioSys = {
   },
   sfx(name) {
     switch (name) {
-      case 'coin':   this.tone(1100, .09, 'square', .10, 1650); break;
+      case 'coin': {
+        const c = Math.min(state.combo || 0, 24);
+        const f = 1100 * Math.pow(1.035, c);
+        this.tone(f, .09, 'square', .10, f * 1.5); break;
+      }
+      case 'whoosh': this.noise(.12, .16); this.tone(1500, .1, 'sine', .05, 500); break;
+      case 'revive': [392,523,659,784,1046].forEach((f,i)=>setTimeout(()=>this.tone(f,.14,'square',.13),i*70)); break;
+      case 'level':  [523,784,1046,1568].forEach((f,i)=>setTimeout(()=>this.tone(f,.11,'triangle',.12),i*70)); break;
       case 'jump':   this.tone(330, .18, 'square', .12, 700); break;
       case 'jump2':  this.tone(520, .16, 'square', .12, 1100); break;
       case 'slide':  this.tone(500, .15, 'sawtooth', .08, 180); break;
@@ -1292,11 +1398,28 @@ const state = {
   lastSpawnZ: -999, jumpBuffer: 0,
   curve: 0, curveTarget: 0, hill: 0, hillTarget: 0, nextBendDist: 220,
   pow: { magnet:0, shield:0, boost:0, slowmo:0, mult:0, fever:0 },
+  powMax: {},
   shake: 0, zone: 0,
+  combo: 0, comboT: 0, comboBest: 0,
+  revives: 0, reviveT: 0, milestone: 0,
   char: charById(save.selected),
 };
 
-function powerDuration(base) { return state.char.bonusKey === 'powerDur' ? base * 1.3 : base; }
+function powerDuration(base, upgKey) {
+  let d = state.char.bonusKey === 'powerDur' ? base * 1.3 : base;
+  if (upgKey) d *= 1 + .16 * (save.upg[upgKey] || 0);
+  return d;
+}
+function addCombo(n) {
+  state.combo += n;
+  state.comboT = 4;
+  state.comboBest = Math.max(state.comboBest, state.combo);
+  trackStat('comboMax', state.combo, true);
+}
+function breakCombo() {
+  if (state.combo >= 8) addFloater('💔 Combo perdu…', '#ff9a9a');
+  state.combo = 0; state.comboT = 0;
+}
 function multValue() { return state.char.bonusKey === 'megaMult' ? 3 : 2; }
 
 /* ----- courbure du monde : virages et collines visuels façon Temple Run.
@@ -1463,6 +1586,9 @@ function startRun() {
   chaser.dist = 4.0; chaser.targetDist = 4.0; chaser.laneF = 1;
   chaser.mode = 'close'; chaser.timer = 3.5; chaser.drumAcc = 0;   // poursuite d'intro
   state.pow = { magnet:0, shield:0, boost:0, slowmo:0, mult:0, fever:0 };
+  state.powMax = {};
+  state.combo = 0; state.comboT = 0; state.comboBest = 0;
+  state.revives = 0; state.reviveT = 0; state.milestone = 0;
   state.char = charById(save.selected);
   player.lane = 1; player.laneF = 1;
   player.y = 0; player.vy = 0; player.sliding = 0; player.usedDouble = false;
@@ -1491,13 +1617,56 @@ function endRun(label) {
   burst3D(player.group.position.x, 1.2, state.z + 1, 0xff3b5d, 26, 9);
 }
 
+/* ----- revive : continuer la course contre des cerveaux ----- */
+const REVIVE_COSTS = [60, 200, 500];
+function reviveCost() { return REVIVE_COSTS[state.revives]; }
+function tryRevive() {
+  const cost = reviveCost();
+  if (cost === undefined || save.brains + state.runBrains < cost) { finishGameOver(); return; }
+  state.mode = 'revive';
+  state.reviveT = 5;
+  document.getElementById('reviveCost').textContent = cost;
+  showScreen('revive');
+}
+function doRevive() {
+  const cost = reviveCost();
+  let rest = cost;
+  const fromRun = Math.min(state.runBrains, rest);
+  state.runBrains -= fromRun; rest -= fromRun;
+  save.brains -= rest;
+  persist();
+  state.revives++;
+  state.dead = false; state.mode = 'play';
+  state.invinc = 2.6; state.shake = 0; state.stumbleSlow = 0;
+  player.y = 0; player.vy = 0; player.sliding = 0;
+  player.mesh.rotation.z = 0; player.mesh.material.opacity = 1;
+  player.group.position.y = 0;
+  /* nettoie la zone devant pour une reprise juste */
+  for (let i = state.objects.length - 1; i >= 0; i--) {
+    const o = state.objects[i];
+    if (o.kind === 'obs' && o.z > state.z - 2 && o.z < state.z + 45) {
+      releaseObstacle(o);
+      state.objects.splice(i, 1);
+    }
+  }
+  chaserEscape();
+  showScreen(null);
+  addFloater('❤️ RÉSURRECTION BRAINROT !', '#ff2bd6');
+  AudioSys.sfx('revive');
+  AudioSys.startMusic();
+}
+
 function finishGameOver() {
   state.mode = 'over';
   const sc = Math.floor(state.score);
   const isRecord = sc > save.high;
   if (isRecord) save.high = sc;
+  if (state.dist > save.bestDist) save.bestDist = Math.floor(state.dist);
   save.brains += state.runBrains;
   persist();
+  document.getElementById('goMissions').innerHTML = missionsHTML();
+  document.getElementById('goCombo').textContent =
+    state.comboBest >= 5 ? `🔥 Meilleur combo : x${state.comboBest}` : '';
   document.getElementById('goScore').textContent = sc.toLocaleString('fr-FR');
   document.getElementById('goDist').textContent = Math.floor(state.dist) + ' m';
   document.getElementById('goBrains').textContent = state.runBrains;
@@ -1518,9 +1687,11 @@ function jump() {
   if (state.mode !== 'play' || state.dead || state.paused) return;
   if (player.y <= 0.01) {
     player.vy = 8.6; player.sliding = 0; player.usedDouble = false;
+    trackStat('jumps', 1);
     AudioSys.sfx('jump');
   } else if (state.char.bonusKey === 'doubleJump' && !player.usedDouble) {
     player.vy = 7.8; player.usedDouble = true;
+    trackStat('jumps', 1);
     AudioSys.sfx('jump2');
     burst3D(player.group.position.x, player.y + .6, state.z, 0xf78fb8, 10, 5);
   } else {
@@ -1529,6 +1700,7 @@ function jump() {
 }
 function slide() {
   if (state.mode !== 'play' || state.dead || state.paused) return;
+  if (player.sliding <= 0) trackStat('slides', 1);
   player.sliding = 0.65;
   if (player.y > 0) player.vy = -16;
   AudioSys.sfx('slide');
@@ -1554,16 +1726,18 @@ function applyPickup(o) {
       if (state.char.bonusKey === 'brainGain' && Math.random() < .25) gain = 2;
       if (P.fever > 0) gain *= 2;
       state.runBrains += gain;
-      state.score += 10 * (P.mult > 0 ? multValue() : 1);
+      addCombo(1);
+      trackStat('brains', gain);
+      state.score += 10 * (P.mult > 0 ? multValue() : 1) * (1 + Math.min(state.combo, 50) * .02);
       AudioSys.sfx('coin');
       burst3D(o.g.position.x, o.g.position.y, o.z, 0xffd35c, 4, 4);
       return;
     }
-    case 'magnet': P.magnet = powerDuration(7);  addFloater('🧲 AIMANT !', '#19c8c8'); break;
-    case 'shield': P.shield = Math.max(P.shield, powerDuration(12)); addFloater('🛡️ BOUCLIER !', '#19c8c8'); AudioSys.sfx('shield'); break;
-    case 'boost':  P.boost  = powerDuration(3.2); addFloater('🚀 BOOST !', '#ff2bd6'); chaserEscape(); break;
+    case 'magnet': P.magnet = powerDuration(7, 'magnet');  addFloater('🧲 AIMANT !', '#19c8c8'); break;
+    case 'shield': P.shield = Math.max(P.shield, powerDuration(12, 'shield')); addFloater('🛡️ BOUCLIER !', '#19c8c8'); AudioSys.sfx('shield'); break;
+    case 'boost':  P.boost  = powerDuration(3.2, 'boost'); addFloater('🚀 BOOST !', '#ff2bd6'); chaserEscape(); break;
     case 'slowmo': P.slowmo = powerDuration(state.char.bonusKey === 'noSlip' ? 6 : 5); addFloater('🐌 SLOW-MO !', '#3fae6a'); break;
-    case 'mult':   P.mult   = powerDuration(10); addFloater(`✖️ SCORE x${multValue()} !`, '#ffd35c'); break;
+    case 'mult':   P.mult   = powerDuration(10, 'mult'); addFloater(`✖️ SCORE x${multValue()} !`, '#ffd35c'); break;
     case 'fever':  P.fever  = powerDuration(6);  addFloater('🌈 FEVER BRAINROT !!', '#ff2bd6'); AudioSys.sfx('fever'); chaserEscape(); break;
     case 'chest': {
       const loot = irnd(25, 80);
@@ -1575,6 +1749,8 @@ function applyPickup(o) {
       return;
     }
   }
+  state.powMax[o.type] = state.pow[o.type];
+  trackStat('pow', 1);
   AudioSys.sfx('power');
 }
 
@@ -1587,6 +1763,7 @@ function hitObstacle(o) {
       addFloater('🩴 Sandales magiques !', '#3fae6a');
       return;
     }
+    breakCombo();
     state.stumbleSlow = 1.4;
     state.shake = .5;
     AudioSys.sfx('splash');
@@ -1611,6 +1788,7 @@ function hitObstacle(o) {
   if (state.invinc > 0) return;
   if (P.shield > 0) {
     P.shield = 0; state.invinc = 1.2; o.hitDone = true;
+    breakCombo();
     addFloater('🛡️ Bouclier brisé !', '#19c8c8');
     AudioSys.sfx('shield');
     burst3D(player.group.position.x, 1.4, state.z, 0x19f7ff, 20, 8);
@@ -1636,7 +1814,7 @@ function update(dt) {
     player.mesh.material.opacity = Math.max(0, 1 - S.deathTimer);
     player.mesh.material.transparent = true;
     updateParticles(dt);
-    if (S.deathTimer > 1.15) { player.mesh.material.opacity = 1; finishGameOver(); }
+    if (S.deathTimer > 1.15) { player.mesh.material.opacity = 1; tryRevive(); }
     return;
   }
 
@@ -1656,9 +1834,29 @@ function update(dt) {
   const move = S.speed * dt;
   S.z += move;
   S.dist += move;
+  trackStat('dist', move);
+  trackStat('runDist', S.dist, true);
   const mult = (P.mult > 0 ? multValue() : 1) * (P.fever > 0 ? 2 : 1) *
-               (S.char.bonusKey === 'score' ? 1.1 : 1);
+               (S.char.bonusKey === 'score' ? 1.1 : 1) *
+               (1 + Math.min(S.combo, 50) * .02) *          // combo
+               (1 + Math.min(save.level * .02, .6));        // niveau du joueur
   S.score += move * 1.7 * mult;
+
+  /* combo : décroît si on ne ramasse/frôle plus rien */
+  if (S.comboT > 0) {
+    S.comboT -= dt;
+    if (S.comboT <= 0) S.combo = 0;
+  }
+
+  /* palier tous les 500 m : petite dopamine + bonus */
+  const ms = Math.floor(S.dist / 500);
+  if (ms > S.milestone) {
+    S.milestone = ms;
+    const bonus = ms * 100;
+    S.score += bonus;
+    addFloater(`🏁 ${ms * 500} m ! +${bonus}`, '#3fae6a');
+    AudioSys.sfx('level');
+  }
 
   /* virages et collines : nouvelle direction tous les 220-420 m */
   if (S.dist > S.nextBendDist) {
@@ -1786,6 +1984,18 @@ function update(dt) {
       }
     }
 
+    /* near-miss : l'obstacle frôlé vient de passer derrière → récompense */
+    if (o.kind === 'obs' && o.closeCall && !o.nearDone && !o.hitDone && o.z < S.z - 1.3) {
+      o.nearDone = true;
+      addCombo(2);
+      trackStat('near', 1);
+      const gain = Math.round(30 * (1 + Math.min(S.combo, 50) * .02));
+      S.score += gain;
+      if (Math.random() < .45 || S.combo >= 10) addFloater(`⚡ FRÔLÉ ! +${gain}`, '#19f7ff');
+      AudioSys.sfx('whoosh');
+      burst3D(px, 1.4, S.z - 1, 0x19f7ff, 6, 5);
+    }
+
     /* despawn derrière le joueur */
     if (o.z < S.z - DESPAWN_BEHIND) {
       (o.kind === 'obs' ? releaseObstacle : releasePickup)(o);
@@ -1808,12 +2018,16 @@ function update(dt) {
         continue;
       }
       const laneOk = o.lane === 'all' || Math.abs(laneToX(o.lane) - px) < 1.45;
-      if (!laneOk) continue;
+      if (!laneOk) {
+        /* esquive latérale de justesse (voie voisine) */
+        if (o.def.hit !== 'puddle' && Math.abs(laneToX(o.lane) - px) < 2.9) o.closeCall = true;
+        continue;
+      }
       if (o.type === 'fridge' && !o.landed) continue;
       const h = o.def.hit;
-      if (h === 'low'    && player.y > 0.95) continue;
+      if (h === 'low'    && player.y > 0.95) { o.closeCall = true; continue; }
       if (h === 'puddle' && player.y > 0.5)  continue;
-      if (h === 'high'   && player.sliding > 0) continue;
+      if (h === 'high'   && player.sliding > 0) { o.closeCall = true; continue; }
       hitObstacle(o);
       if (o.hitDone && h !== 'puddle') {
         releaseObstacle(o);
@@ -1946,6 +2160,13 @@ function loop(now) {
   const dt = clamp((now - lastT) / 1000, 0, 0.05);
   lastT = now;
   if (state.mode === 'play' && !state.paused) update(dt);
+  else if (state.mode === 'revive') {      // compte à rebours de résurrection
+    state.reviveT -= dt;
+    const bar = document.getElementById('reviveBar');
+    if (bar) bar.style.width = Math.max(0, state.reviveT / 5 * 100) + '%';
+    updateParticles(dt);
+    if (state.reviveT <= 0) finishGameOver();
+  }
   else if (state.mode !== 'play') {        // démo du menu : on avance doucement
     state.t += dt;
     state.z += 9 * dt;
@@ -1976,11 +2197,18 @@ function updateHUD() {
   const m = (state.pow.mult > 0 ? multValue() : 1) * (state.pow.fever > 0 ? 2 : 1);
   mb.style.display = m > 1 ? 'block' : 'none';
   mb.textContent = 'x' + m + ' SCORE !';
+  const cb = document.getElementById('comboBox');
+  if (state.combo >= 3) {
+    cb.style.display = 'block';
+    cb.textContent = '🔥 COMBO x' + state.combo;
+    cb.style.fontSize = clamp(16 + state.combo * .4, 16, 34) + 'px';
+  } else cb.style.display = 'none';
   let html = '';
   for (const k in POW_META) {
     const v = state.pow[k];
     if (v > 0) {
-      const pct = v > 1e8 ? 100 : Math.min(100, v / powerDuration(POW_META[k].max) * 100);
+      const max = state.powMax[k] || powerDuration(POW_META[k].max);
+      const pct = v > 1e8 ? 100 : Math.min(100, v / max * 100);
       html += `<div class="powIcon">${POW_META[k].ico}<div class="bar" style="width:${pct}%"></div></div>`;
     }
   }
@@ -2000,13 +2228,31 @@ function addFloater(txt, color) {
 const screens = {
   menu: document.getElementById('menu'), shop: document.getElementById('shop'),
   pause: document.getElementById('pause'), gameover: document.getElementById('gameover'),
-  tuto: document.getElementById('tuto'),
+  tuto: document.getElementById('tuto'), revive: document.getElementById('revive'),
 };
+function checkDaily() {
+  const today = new Date().toDateString();
+  if (save.daily.date === today) return;
+  const yesterday = new Date(Date.now() - 864e5).toDateString();
+  save.daily.streak = save.daily.date === yesterday ? save.daily.streak + 1 : 1;
+  save.daily.date = today;
+  const reward = 30 + 20 * Math.min(save.daily.streak, 7);
+  save.brains += reward;
+  persist();
+  toast(`🎁 Bonus jour ${save.daily.streak} : +${reward} 🧠 ! Reviens demain pour plus !`);
+  AudioSys.sfx('chest');
+}
 function showScreen(name) {
   for (const k in screens) screens[k].classList.toggle('on', k === name);
   if (name === 'menu') {
-    document.getElementById('menuHigh').textContent = '🏆 Record : ' + save.high.toLocaleString('fr-FR');
+    checkDaily();
+    document.getElementById('menuHigh').textContent = '🏆 Record : ' + save.high.toLocaleString('fr-FR') +
+      (save.bestDist ? ` · ${save.bestDist.toLocaleString('fr-FR')} m` : '');
     document.getElementById('menuBrains').textContent = '🧠 Cerveaux : ' + save.brains.toLocaleString('fr-FR');
+    document.getElementById('menuLevel').textContent =
+      `⭐ Niveau ${save.level} — bonus score permanent +${Math.min(save.level * 2, 60)}%`;
+    document.getElementById('menuMissions').innerHTML =
+      '<div class="mTitle">🎯 MISSIONS</div>' + missionsHTML();
   }
   if (name === 'shop') buildShop();
 }
@@ -2043,6 +2289,52 @@ function buildShop() {
       card.querySelector('.charFace').appendChild(mini);
     });
   }
+  /* ----- améliorations des power-ups (méta-progression) ----- */
+  const UPG_DEFS = [
+    { key:'magnet', ico:'🧲', name:'Aimant',         desc:'Aspire les 🧠 plus longtemps' },
+    { key:'shield', ico:'🛡️', name:'Bouclier',       desc:'Protection prolongée' },
+    { key:'boost',  ico:'🚀', name:'Boost',          desc:'Fonce plus longtemps' },
+    { key:'mult',   ico:'✖️', name:'Multiplicateur', desc:'Score multiplié plus longtemps' },
+  ];
+  const MAX_UPG = 5;
+  const upgCost = lv => 120 * (lv + 1) * (lv + 1);
+  const ugrid = document.getElementById('upgGrid');
+  ugrid.innerHTML = '';
+  for (const u of UPG_DEFS) {
+    const lv = save.upg[u.key] || 0;
+    const card = document.createElement('div');
+    card.className = 'charCard';
+    const dots = '⬤'.repeat(lv) + '◯'.repeat(MAX_UPG - lv);
+    const btn = lv >= MAX_UPG
+      ? `<button class="charBtn cur">MAX</button>`
+      : `<button class="charBtn" data-upg="${u.key}">🧠 ${upgCost(lv).toLocaleString('fr-FR')}</button>`;
+    card.innerHTML = `
+      <div style="font-size:34px">${u.ico}</div>
+      <div class="charName">${u.name}</div>
+      <div class="charDesc">${u.desc}<br>+${16 * lv}% de durée</div>
+      <div style="color:var(--gold);font-size:12px;letter-spacing:2px">${dots}</div>
+      ${btn}`;
+    ugrid.appendChild(card);
+  }
+  ugrid.querySelectorAll('button[data-upg]').forEach(b => {
+    b.addEventListener('click', () => {
+      AudioSys.init();
+      const key = b.dataset.upg;
+      const cost = upgCost(save.upg[key] || 0);
+      if (save.brains >= cost) {
+        save.brains -= cost;
+        save.upg[key]++;
+        persist();
+        AudioSys.sfx('chest');
+        toast(`⚡ ${key.toUpperCase()} amélioré (niv. ${save.upg[key]}) !`);
+      } else {
+        AudioSys.sfx('lane');
+        toast(`Pas assez de 🧠 ! (il en faut ${cost})`);
+      }
+      buildShop();
+    });
+  });
+
   grid.querySelectorAll('button[data-act]').forEach(b => {
     b.addEventListener('click', () => {
       AudioSys.init();
@@ -2086,7 +2378,8 @@ window.addEventListener('keydown', e => {
   else if (k === 'p' || k === 'escape') togglePause();
   else if (k === 'm') toggleMute();
   else if (k === 'enter') {
-    if (screens.gameover.classList.contains('on')) startRun();
+    if (screens.revive.classList.contains('on')) doRevive();
+    else if (screens.gameover.classList.contains('on')) startRun();
     else if (screens.menu.classList.contains('on')) startBtnAction();
     else if (screens.tuto.classList.contains('on')) startRun();
     else if (screens.pause.classList.contains('on')) togglePause(false);
@@ -2145,6 +2438,8 @@ document.getElementById('charsBtn').addEventListener('click', () => { AudioSys.i
 document.getElementById('shopBack').addEventListener('click', () => { AudioSys.sfx('click'); showScreen('menu'); });
 document.getElementById('goMenuBtn').addEventListener('click', () => { AudioSys.sfx('click'); showScreen('menu'); });
 document.getElementById('pauseBtn').addEventListener('click', () => togglePause());
+document.getElementById('reviveBtn').addEventListener('click', () => { AudioSys.init(); doRevive(); });
+document.getElementById('reviveNo').addEventListener('click', () => finishGameOver());
 document.getElementById('resumeBtn').addEventListener('click', () => togglePause(false));
 document.getElementById('quitBtn').addEventListener('click', () => {
   state.mode = 'menu'; state.paused = false;
